@@ -83,11 +83,19 @@ After changing Pi locally, run this from the repo:
 ./sync.sh
 ```
 
-Or, after running `./install.sh`, use the global helper:
+Install the global helper from this checkout:
+
+```bash
+./setup_sync.sh
+```
+
+Then use it from anywhere:
 
 ```bash
 pi-setup-sync
 ```
+
+`./install.sh` also runs `./setup_sync.sh` automatically.
 
 Custom commit message:
 

@@ -33,12 +33,7 @@ else
   echo "Skipping config copy. To copy settings/mcp examples, run: ./install.sh --copy-config"
 fi
 
-mkdir -p "$HOME/.local/bin"
-ln -sf "$ROOT/sync.sh" "$HOME/.local/bin/pi-setup-sync"
-
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-  echo "Note: ~/.local/bin is not on PATH. Add it to use pi-setup-sync globally."
-fi
+"$ROOT/setup_sync.sh"
 
 echo "Done. Restart Pi or run /reload in an existing session."
 echo "Sync future tweaks with: pi-setup-sync"
