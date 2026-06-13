@@ -1,7 +1,7 @@
 # Abhinand's Pi Setup
 
 <p align="center">
-  <img src="assets/featured.png" alt="Pi setup screenshot" width="600">
+  <img src="assets/featured.png" alt="Pi setup screenshot" width="800">
 </p>
 
 Personal reproducible setup for [Pi coding agent](https://pi.dev): extensions, custom themes, and safe configuration examples.
