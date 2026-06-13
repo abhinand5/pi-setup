@@ -10,7 +10,13 @@ set -euo pipefail
 #   ./sync.sh --all-skills
 #   ./sync.sh --skills hf-cli,diagnose
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" == /* ]] || SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 PI_HOME="${PI_HOME:-$HOME/.pi/agent}"
 PUSH=1
 DRY_RUN=0
