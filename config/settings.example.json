@@ -13,7 +13,18 @@
     "npm:pi-mcp-adapter",
     "npm:context-mode",
     "npm:@narumitw/pi-goal",
-    "npm:@juicesharp/rpiv-advisor"
+    "npm:@juicesharp/rpiv-advisor",
+    "npm:@ryan_nookpi/pi-extension-claude-spinner"
   ],
-  "defaultThinkingLevel": "medium"
+  "defaultThinkingLevel": "high",
+  "enabledModels": [
+    "openai-codex/gpt-5.5",
+    "anthropic/claude-opus-4-8",
+    "anthropic/claude-sonnet-4-6",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
+    "anthropic/claude-haiku-4-5",
+    "local-in6bhf1g/Qwen3.6-27B"
+  ],
+  "hideThinkingBlock": true
 }
