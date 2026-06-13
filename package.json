@@ -2,24 +2,18 @@
   "name": "abhinand-pi-setup",
   "version": "1.0.0",
   "private": true,
-  "description": "Personal Pi coding agent setup: extensions, themes, and reproducible config examples.",
+  "description": "Personal pi-setup for backing up, restoring, and recreating Pi coding agent config across machines.",
   "keywords": [
-    "pi-package",
     "pi-coding-agent",
-    "themes",
-    "extensions"
+    "pi-setup",
+    "backup",
+    "restore"
   ],
   "license": "UNLICENSED",
   "pi": {
-    "extensions": [
-      "./extensions"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "themes": [
-      "./themes"
-    ]
+    "extensions": [],
+    "skills": [],
+    "themes": []
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

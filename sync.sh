@@ -255,6 +255,43 @@ copy_selected_skills() {
   echo "Backed up $selected_count skill(s) into $dst_root"
 }
 
+copy_settings_example() {
+  python3 - <<'PY' "$PI_HOME/settings.json" "$ROOT/config/settings.example.json" "$ROOT"
+import json
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+repo_root = Path(sys.argv[3]).resolve()
+
+data = json.loads(src.read_text())
+packages = data.get("packages")
+if isinstance(packages, list):
+    kept = []
+    removed = 0
+    for item in packages:
+        source = item.get("source") if isinstance(item, dict) else item
+        remove = False
+        if isinstance(source, str) and not source.startswith(("npm:", "git:", "http://", "https://", "ssh://")):
+            try:
+                candidate = (src.parent / source).expanduser().resolve()
+            except Exception:
+                candidate = None
+            remove = candidate == repo_root
+        if remove:
+            removed += 1
+        else:
+            kept.append(item)
+    if removed:
+        data["packages"] = kept
+        print(f"settings ok: removed {removed} self-referential pi-setup package entry")
+
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text(json.dumps(data, indent=2) + "\n")
+PY
+}
+
 validate_json() {
   python3 - <<'PY' "$@"
 import json, sys
@@ -319,7 +356,7 @@ copy_dir_contents "$PI_HOME/extensions" "$ROOT/extensions"
 copy_dir_contents "$PI_HOME/themes" "$ROOT/themes"
 copy_selected_skills
 mkdir -p "$ROOT/config"
-cp "$PI_HOME/settings.json" "$ROOT/config/settings.example.json"
+copy_settings_example
 if [[ -f "$PI_HOME/mcp.json" ]]; then
   cp "$PI_HOME/mcp.json" "$ROOT/config/mcp.example.json"
 fi
