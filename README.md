@@ -129,6 +129,8 @@ pi-setup-sync
 
 `pi-setup-sync` copies current `~/.pi/agent/extensions`, `~/.pi/agent/themes`, selected skills, `settings.json`, and `mcp.json` into this repo, validates JSON/theme tokens, commits, and pushes. It strips any self-referential package entry that would make Pi load this `pi-setup` repo at startup.
 
+Syncing requires `git` and `python3`; pushing requires normal GitHub credentials for this repo.
+
 Custom commit message:
 
 ```bash

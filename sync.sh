@@ -313,8 +313,20 @@ validate_themes() {
 import json, glob, sys
 from pathlib import Path
 root = Path(sys.argv[1])
-schema = json.load(open('/opt/pi-coding-agent/theme/theme-schema.json', encoding='utf-8'))
-required = set(schema['properties']['colors']['required'])
+schema_path = Path('/opt/pi-coding-agent/theme/theme-schema.json')
+if schema_path.exists():
+    schema = json.load(open(schema_path, encoding='utf-8'))
+    required = set(schema['properties']['colors']['required'])
+else:
+    required = {
+        'accent', 'border', 'borderAccent', 'borderMuted', 'success', 'error', 'warning', 'muted', 'dim', 'text', 'thinkingText',
+        'selectedBg', 'userMessageBg', 'userMessageText', 'customMessageBg', 'customMessageText', 'customMessageLabel',
+        'toolPendingBg', 'toolSuccessBg', 'toolErrorBg', 'toolTitle', 'toolOutput',
+        'mdHeading', 'mdLink', 'mdLinkUrl', 'mdCode', 'mdCodeBlock', 'mdCodeBlockBorder', 'mdQuote', 'mdQuoteBorder', 'mdHr', 'mdListBullet',
+        'toolDiffAdded', 'toolDiffRemoved', 'toolDiffContext',
+        'syntaxComment', 'syntaxKeyword', 'syntaxFunction', 'syntaxVariable', 'syntaxString', 'syntaxNumber', 'syntaxType', 'syntaxOperator', 'syntaxPunctuation',
+        'thinkingOff', 'thinkingMinimal', 'thinkingLow', 'thinkingMedium', 'thinkingHigh', 'thinkingXhigh', 'bashMode',
+    }
 for path in sorted((root / 'themes').glob('*.json')):
     data = json.load(open(path, encoding='utf-8'))
     colors = data.get('colors', {})
