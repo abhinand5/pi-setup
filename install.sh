@@ -302,19 +302,77 @@ else
   "$ROOT/setup_sync.sh"
 fi
 
-if [[ -f "$ROOT/bin/pi" ]]; then
+is_our_launcher() {
+  grep -q "Personal Pi launcher" "$1" 2>/dev/null
+}
+
+# Find a real Pi binary, ignoring our own launcher at $BIN_DIR/pi.
+find_real_pi() {
+  local candidate launcher
+  launcher="$(readlink -f "$BIN_DIR/pi" 2>/dev/null || printf '%s\n' "$BIN_DIR/pi")"
+
+  if [[ -n "${PI_REAL_BIN:-}" && -x "${PI_REAL_BIN}" ]]; then
+    printf '%s\n' "$PI_REAL_BIN"
+    return 0
+  fi
+  for candidate in /usr/local/bin/pi /usr/bin/pi /opt/homebrew/bin/pi; do
+    [[ -x "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  while IFS= read -r candidate; do
+    [[ -x "$candidate" ]] || continue
+    [[ "$(readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate")" == "$launcher" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(type -P -a pi 2>/dev/null || true)
+  return 1
+}
+
+install_launcher() {
+  local src="$ROOT/bin/pi"
+  local dst="$BIN_DIR/pi"
+  local replaced_target=""
+
+  [[ -f "$src" ]] || return 0
   run mkdir -p "$BIN_DIR"
-  run cp "$ROOT/bin/pi" "$BIN_DIR/pi"
-  run chmod +x "$BIN_DIR/pi"
+
+  # Never copy onto whatever is already at $dst: cp follows symlinks and writes
+  # *through* them, so installing over a symlink that points at the real Pi
+  # binary would overwrite Pi's own executable with this shell script. Unlink
+  # first so the copy always creates a fresh regular file.
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    if ! is_our_launcher "$dst"; then
+      replaced_target="$(readlink -f "$dst" 2>/dev/null || printf '%s\n' "$dst")"
+      echo "Note: replacing existing $dst (resolves to $replaced_target)"
+    fi
+    run rm -f "$dst"
+  fi
+
+  run cp "$src" "$dst"
+  run chmod +x "$dst"
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "would install compact Pi launcher: $BIN_DIR/pi"
+    echo "would install compact Pi launcher: $dst"
   else
-    echo "Installed compact Pi launcher: $BIN_DIR/pi"
+    echo "Installed compact Pi launcher: $dst"
   fi
-  if [[ -z "${PI_REAL_BIN:-}" && ! -x /usr/local/bin/pi && ! -x /usr/bin/pi && ! -x /opt/homebrew/bin/pi ]]; then
+
+  local real_pi
+  real_pi="$(find_real_pi || true)"
+  if [[ -z "$real_pi" ]]; then
     echo "Warning: no existing Pi binary found. Install Pi first, or set PI_REAL_BIN before running the launcher."
+    if [[ -n "$replaced_target" && -x "$replaced_target" ]]; then
+      echo "         $dst previously pointed at $replaced_target; set PI_REAL_BIN='$replaced_target' to keep using it."
+    fi
+  elif [[ "$real_pi" != /usr/local/bin/pi && "$real_pi" != /usr/bin/pi && "$real_pi" != /opt/homebrew/bin/pi ]]; then
+    # Found only via PATH (e.g. an nvm/npm global). That PATH entry may be absent
+    # in a fresh shell, which would leave the launcher unable to resolve Pi.
+    echo "Note: Pi resolved via PATH at $real_pi."
+    echo "      If that directory is not on PATH in every shell, set PI_REAL_BIN='$real_pi'."
   fi
-fi
+}
+
+install_launcher
 
 if [[ -n "$BACKUP_DIR" ]]; then
   echo "To revert this install: $ROOT/install.sh --revert '$BACKUP_DIR'"
