@@ -168,7 +168,10 @@ PY
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
     -d "$payload" \
-    "$base/chat/completions" 2>/dev/null || printf '000')"
+    "$base/chat/completions" 2>/dev/null || true)"
+  # curl prints 000 on a transport failure and nothing when it cannot start
+  code="${code: -3}"
+  [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
 
   case "$code" in
     200)
