@@ -42,7 +42,8 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 | Install safety | `--dry-run` preview, `--backup`, and `--revert <backup-dir>` |
 | Sync | `pi-setup-sync` copies live `~/.pi/agent` resources back to this repo, commits, and pushes |
 | Extensions | welcome header, context breakdown, file-change review, safety guard, custom footer, local model manager |
-| Config examples | Safe `settings.example.json`, `mcp.example.json`, `micme.example.json`, and `playwright-mcp.json`; the settings example pins OpenRouter through the local xray proxy |
+| Config examples | Safe `settings.example.json`, `mcp.example.json`, `micme.example.json`, `playwright-mcp.json`, and the `pi-pstack-adapter.json` role pinning; the settings example pins OpenRouter through the local xray proxy and gates delegation with `subagents.modelScope` |
+| Model cap check | `pi-models-check` probes every id in the delegation allow list against the provider, so a catalog entry is never mistaken for a served model |
 | Voice dictation | Micme wired to the local [Handy](https://handy.computer) CLI — `alt+m` to dictate, no cloud STT, no API key |
 | Browser automation | Playwright MCP server for interactive UAT on a private Xvfb display (no focus stealing), with a `browser-uat` skill and `uat.sh` environment CLI |
 | Themes | `nebula-pulse`, `opencode`, `tokyo-night`, `one-dark-pro`, and more |
@@ -54,6 +55,10 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - suppresses Pi's large built-in update boxes via `PI_OFFLINE=1` after its own compact notice
   - detects the real Pi binary from `PI_REAL_BIN`, `/usr/local/bin/pi`, `/usr/bin/pi`, or `/opt/homebrew/bin/pi`
   - preserves Pi's native themed header and loaded skills/extensions/themes listing
+- `bin/pi-models-check` — probes `subagents.modelScope.allow` against the provider
+  - `max_tokens: 1` per id, key from the environment or `models.json`; prints 200/404 per model
+  - turns "the catalog lists it" into "the provider answered", which is the only evidence that matters under a workspace guardrail
+  - exit 1 on any 404, so it can gate a restore or a CI run
 - `extensions/` — versioned copies of custom Pi extensions
   - themed startup welcome card with `/welcome updates on|off`
   - `/context` usage breakdown for startup tokens, messages, and tool calls (scrollback output; not added to model context)
@@ -81,7 +86,8 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - `micme.example.json` — Micme voice dictation wired to the local Handy CLI (see [Voice dictation](#voice-dictation-handy--micme))
   - `playwright-mcp.json` — base Playwright MCP config the Xvfb wrapper derives from (see [Browser automation](#browser-automation-playwright-mcp))
   - `models.example.json` — the OpenRouter vendor pin; `--copy-config` merges it into `models.json` instead of replacing it
-  - `AGENTS.md` — the delegation model policy: allowed families (`deepseek/*`, `z-ai/glm-*`), blocked families (`google/*`/`gemini-*`, `openai/*`/`gpt-*`), no Cursor model slugs, `pstack:<role>` instead of a model (see [pstack skills](#pstack-skills-pi-pstack-adapter))
+  - `pi-pstack-adapter.example.json` — every pstack role and panel pinned to an id the provider serves; restored only when `~/.pi/agent/pi-pstack-adapter.json` is absent, `--copy-config` overwrites
+  - `AGENTS.md` — the delegation model policy: the 14 ids the OpenRouter workspace guardrail serves, with prices and assigned roles; the blocked list (`deepseek-v4-pro`, `google/*`/`gemini-*`, `openai/*`/`gpt-*`, all `routerai/*`); no Cursor model slugs; `pstack:<role>` instead of a model (see [pstack skills](#pstack-skills-pi-pstack-adapter))
 
 ## Set up from GitHub on a machine
 
@@ -144,7 +150,9 @@ Provider routing in the example:
 
 - `defaultProvider` is `openrouter` with `defaultModel` `deepseek/deepseek-v4.1-flash-1017`; the key comes from `OPENROUTER_API_KEY`.
 - `httpProxy` is `http://127.0.0.1:10808` — the local xray inbound. Pi applies it as `HTTP_PROXY`/`HTTPS_PROXY` for its own HTTP clients (only when those env vars are unset), so OpenRouter works even when the shell has no proxy env. Change or drop it on machines without that proxy. Keep `NO_PROXY=localhost,127.0.0.1,::1` in the shell so local endpoints (LM Studio, local MCP) bypass the proxy.
-- `subagents.agentOverrides` and `observational-memory.models` point at the same OpenRouter model (`scout`/`researcher` low thinking, `worker`/`consolidator` medium).
+- `subagents.modelScope` is the delegation gate: `enforce: true`, `strict: false` in the example, `allow` = the 14 ids the OpenRouter workspace guardrail serves, plus narrower lists for `reviewer`, `oracle`, and `evidence-auditor`. `strict: true` on a live machine additionally rejects an id the gate cannot classify; the example ships `false` so a different cap does not block every launch. Background: [docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-outside-the-cap).
+- `subagents.defaultModel` is `openrouter/z-ai/glm-5.3-flash`, and every bundled agent has an explicit `agentOverrides.<name>.model`, so a delegation that names no model lands on a capped id instead of inheriting the parent's. `observational-memory.models` uses `deepseek-v4.1-flash-1017` (`observer` low, `consolidator` medium).
+- Verify the allow list against the provider before trusting it: `pi-models-check`. A 404 is the cap, not local config.
 - The vendor pin (`deepinfra → inference-net → primeintellect`) lives in `~/.pi/agent/models.json` as `providers.openrouter.modelOverrides`, not in `settings.json`. `config/models.example.json` carries it for restores: `--copy-config` deep-merges that file into the live `models.json`, so other providers (RouterAI, custom endpoints) survive. Order is by observed cost, not list price: OpenRouter's own per-endpoint cache hit rate decides it, because a uniform 94% cache-read assumption flatters providers that cache worse. Read the rates from the frontend stats API the model page uses:
 
 ```bash
@@ -158,7 +166,7 @@ It returns `providerSummaries[].cacheHitRate` and `effectiveInputPrice`/`effecti
 Check `status` on that `api/v1` response before trusting the order. That is what retired `morph`: its only endpoint went `0 → -2 → -5` on 2026-11-11 with 23% uptime over 30 minutes, and by 2026-11-12 `status` was still `-5` at 0% uptime, so a request pinned to `only: ["morph"]` returned `Provider returned error` — a third slot that only ever produced a retry. The replacement is the cheapest healthy endpoint that is not already pinned: `primeintellect`, $19.90 at 93.4% cache hit rate, `status` 0 and 100% uptime, with a 1,048,576 context, and the same slug exists on RouterAI (`status` 0). `deepinfra` still leads on both health and cache hit rate and `inference-net` remains the neutral fallback; `morph` goes back in the pin if its `status` returns to 0 and it stays cheaper than `primeintellect`.
 
 - The previous RouterAI provider block and settings are archived in `~/p/tunnels/docs/client/ai-routing/routerai-provider-config-backup-2026-11-11.md`.
-- `config/models.example.json` also carries the four RouterAI pins (`z-ai/glm-5.3`, `z-ai/glm-5.3-flash`, `deepseek/deepseek-v4.1-flash-1017`, `~deepseek/deepseek-v4-flash-latest`) under `providers.routerai.modelOverrides`. They are inert unless a `routerai` provider with `ROUTERAI_API_KEY` exists, and the merge leaves that provider's 36-model catalog alone. RouterAI honours the same `provider.only`/`order` contract — an unknown slug returns `No endpoints found matching your provider preferences` — and its `/api/v1/models/<id>/endpoints` returns per-endpoint `tag`, `quantization`, `status`, and prices in **RUB**, so order by price within RouterAI, never across the two providers. Only those four models are pinned; the other 32 route freely. **Where a model is pinned on both providers, RouterAI copies the OpenRouter order** — `deepseek/deepseek-v4.1-flash-1017` is `deepinfra → inference-net → primeintellect` on both (`primeintellect` is a RouterAI endpoint too, `status` 0, which is why it could replace `morph` without breaking the equality rule), so the two providers never disagree about which vendor is preferred. RouterAI exposes no cache-hit or uptime stats (its `/api/frontend/*` is 404), so for models OpenRouter has no rule for, the order falls back to listed price with `status != 0` demoted.
+- `config/models.example.json` also carries the four RouterAI pins (`z-ai/glm-5.3`, `z-ai/glm-5.3-flash`, `deepseek/deepseek-v4.1-flash-1017`, `~deepseek/deepseek-v4-flash-latest`) under `providers.routerai.modelOverrides`. They are inert unless a `routerai` provider with `ROUTERAI_API_KEY` exists, and the merge leaves that provider's 36-model catalog alone. RouterAI honours the same `provider.only`/`order` contract — an unknown slug returns `No endpoints found matching your provider preferences` — and its `/api/v1/models/<id>/endpoints` returns per-endpoint `tag`, `quantization`, `status`, and prices in **RUB**, so order by price within RouterAI, never across the two providers. Only those four models are pinned; the other 32 route freely. RouterAI is a **direct provider**: it is outside the delegation policy, so `routerai/*` ids never appear in `subagents.modelScope.allow`, in `pi-pstack-adapter.json`, or in the `AGENTS.md` table, even though the routing above stays configured for direct use. **Where a model is pinned on both providers, RouterAI copies the OpenRouter order** — `deepseek/deepseek-v4.1-flash-1017` is `deepinfra → inference-net → primeintellect` on both (`primeintellect` is a RouterAI endpoint too, `status` 0, which is why it could replace `morph` without breaking the equality rule), so the two providers never disagree about which vendor is preferred. RouterAI exposes no cache-hit or uptime stats (its `/api/frontend/*` is 404), so for models OpenRouter has no rule for, the order falls back to listed price with `status != 0` demoted.
 
 Warnings:
 
@@ -201,6 +209,7 @@ This installs:
 
 - `pi-setup-sync` into `~/.local/bin`
 - compact launcher `bin/pi` into `~/.local/bin/pi`
+- `bin/pi-models-check` into `~/.local/bin/pi-models-check`
 
 It also removes any legacy settings entry that points Pi at this repo as an active package.
 
@@ -240,7 +249,14 @@ Then use it from anywhere:
 pi-setup-sync
 ```
 
-`pi-setup-sync` copies current `~/.pi/agent/extensions`, `~/.pi/agent/themes`, selected skills, `settings.json`, `mcp.json`, and `micme.json` into this repo, validates JSON/theme tokens, commits, and pushes. It strips any self-referential package entry that would make Pi load this `pi-setup` repo at startup.
+`pi-setup-sync` copies current `~/.pi/agent/extensions`, `~/.pi/agent/themes`, selected skills, `settings.json`, `mcp.json`, `micme.json`, `AGENTS.md`, and `pi-pstack-adapter.json` into this repo, validates JSON/theme tokens, commits, and pushes. It strips any self-referential package entry that would make Pi load this `pi-setup` repo at startup.
+
+Two transforms keep the examples portable and honest:
+
+- `settings.example.json` ships `subagents.modelScope` with the real allow list but `strict: false`, so a restore on a machine with a different cap rejects unknown ids without failing outright.
+- `config/models.example.json` is merged with the live `providers.<name>.modelOverrides`, never replaced: the pins are portable, the API keys and provider catalogs are not.
+
+It then refuses to commit when the three copies of the allow list disagree — every id in `pi-pstack-adapter.example.json` and in `modelScope.agents.*.allow` must be inside `modelScope.allow`, and the model-id table in `config/AGENTS.md` must match it exactly.
 
 Syncing requires `git` and `python3`; pushing requires normal GitHub credentials for this repo.
 
@@ -417,10 +433,14 @@ script and the run fails when a new upstream release adds a slug the table does 
 ./patches/pi-pstack-models.sh             # apply + drop stale generated wrappers
 ```
 
-`config/AGENTS.md` carries the matching delegation rule — `deepseek/*` and `z-ai/glm-*` allowed,
-`google/*`/`gemini-*` and `openai/*`/`gpt-*` blocked. `install.sh --restore` copies it only when
-`~/.pi/agent/AGENTS.md` is absent; `--copy-config` overwrites. Background and the evidence:
-[docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-on-gemini).
+The roles then need models that the provider actually serves, and the adapter passes
+`pstack:<role>` through to whatever `~/.pi/agent/pi-pstack-adapter.json` pins. All 12 roles and
+panels are pinned there to ids inside the workspace cap; the file is versioned here as
+`config/pi-pstack-adapter.example.json`. `install.sh --restore` copies both `AGENTS.md` and
+`pi-pstack-adapter.json` only when the live file is absent; `--copy-config` overwrites. The
+enforcement layer behind both is `subagents.modelScope` in `settings.json`, and `pi-models-check`
+proves the allow list against the provider. Background and the evidence:
+[docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-outside-the-cap).
 
 ## Voice dictation (Handy + Micme)
 

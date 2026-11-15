@@ -1,6 +1,6 @@
 # pstack skills on Pi — what is compatible with this setup
 
-Status: **not installed.** `npm:pstack-claude-mirror` was removed on 2026-11-11 because its Pi
+Status: **installed via `npm:pi-pstack-adapter`.** `npm:pstack-claude-mirror` was removed on 2026-11-11 because its Pi
 extension registered a tool named `ask_user_question`, which collides with
 `@juicesharp/rpiv-ask-user-question` and makes Pi refuse to start:
 
@@ -83,9 +83,9 @@ the tool instead of removing the package: write `pi ask tool: off` to
 `~/.pi/agent/pstack-models.md`. That file is pstack's override sheet and is not backed up by this
 repo.
 
-## Model slugs, and why a fan-out dies on Gemini
+## Model slugs, and why a fan-out dies outside the cap
 
-Two different mechanisms get conflated here, so keep them apart.
+Three different mechanisms get conflated here, so keep them apart.
 
 **The skills name models.** Upstream pstack targets Cursor, where every skill reads
 `~/.cursor/rules/pstack-models.mdc` and falls back to a literal slug when that file is missing:
@@ -95,18 +95,53 @@ occurrences, and no `gemini` anywhere in the upstream tree. `patches/pi-pstack-m
 them with `pstack:<role>` references at generation time, and fails the run if a future release adds
 a slug the table does not cover.
 
-**The adapter lists models it cannot run.** `pstack_adapter models` prints every id Pi knows, not
-every id the provider serves. On 2026-11-13 a review fan-out in `work/msl-msb-lk` read that list,
-picked `openrouter/google/gemini-3.8-flash` "for family diversity", and lost the run to a blocked
-Gemini model. That was an ad-hoc `subagent` fan-out, not a pstack skill. The adapter itself never
-picks a model: with unset roles it passes `pstack:<role>` and the child inherits the parent's model.
+**The adapter lists models it cannot run.** `pstack_adapter models`, `subagent({ action: "list" })`
+and `~/.pi/agent/models-store.json` print every id Pi knows, not every id the provider serves. Two
+measured losses:
 
-Do not fix the second one with `set_filter`. Per `src/gate.ts`, an active filter blocks every
-`subagent` workflow script, every child that names no model, and the `resume`, `steer`, and
-`schedule` actions — that breaks ordinary delegation for the whole session. The rule in
-`config/AGENTS.md` (allowed: `deepseek/*`, `z-ai/glm-*`; blocked: `google/*`/`gemini-*`,
-`openai/*`/`gpt-*`) is the cheap guard. A session-scoped `set_filter` is worth it only inside a
-pstack panel run, and has to be cleared afterwards.
+| date | what picked the model | what died |
+| --- | --- | --- |
+| 2026-11-13 | ad-hoc `subagent` fan-out in `work/msl-msb-lk`, reading the catalog "for family diversity" | `openrouter/google/gemini-3.8-flash`, blocked family |
+| 2026-11-15 | `code-review` delegation, roles unset so the child inherited the parent model | `openrouter/deepseek/deepseek-v4-pro`, `404 ... 0 endpoints out of 14 ... guardrail restrictions` |
+
+The 2026-11-15 loss is the important one: an **OpenRouter workspace guardrail ("model cap")**
+serves exactly 14 ids, and the cap is provider-side. A model in `models-store.json` is not evidence
+that the workspace may call it. The adapter itself never picks a model — with unset roles it passes
+`pstack:<role>` and the child inherits the parent's model, which is how `deepseek-v4-pro` escaped
+from a session that had it configured.
+
+### Where the guard actually lives
+
+Four layers, each doing one job:
+
+| layer | file | job |
+| --- | --- | --- |
+| gate | `~/.pi/agent/settings.json` → `subagents.modelScope` (`enforce: true`, `strict: true`, 14 ids in `allow`, narrower per-agent lists for `reviewer`/`oracle`/`evidence-auditor`) | rejects any delegation naming an id outside the cap before the child starts, including the parent-model inheritance path |
+| roles | `~/.pi/agent/pi-pstack-adapter.json` (versioned here as `config/pi-pstack-adapter.example.json`) | pins all 12 pstack roles and panels to capped ids, so `pstack:<role>` never resolves to `inherit` |
+| policy | `config/AGENTS.md` | the human- and model-readable table of the 14 ids, prices, roles, and the explicit block list |
+| probe | `bin/pi-models-check` | POSTs `max_tokens: 1` to every id in `modelScope.allow` and reports 200/404, so "verified on …" is regenerable instead of folklore |
+
+`pi-setup-sync` refuses to sync when those disagree: every id in the adapter example and in
+`modelScope.agents.*.allow` must be inside `modelScope.allow`, and the model-id table in
+`config/AGENTS.md` must equal it exactly.
+
+```bash
+pi-models-check            # probe the allow list
+pi-models-check --json     # same, machine-readable, with the date
+```
+
+A `404` there is the provider cap, not a local misconfiguration: remove the id from the allow list
+and the `AGENTS.md` table, or have the guardrail widened. Never retry it.
+
+The cap covers OpenRouter only. `routerai/*` ids are configured as a direct provider and are still
+outside delegation policy: the four RouterAI pins in `config/models.example.json` are vendor routing
+for direct use, never a target for `subagent`.
+
+Do not fix this with `set_filter` or the adapter's `modelFilter`. Per `src/gate.ts`, an active
+filter blocks every `subagent` workflow script, every child that names no model, and the `resume`,
+`steer`, and `schedule` actions — that broke `code-review` and any skill that lets a child inherit,
+and the filter had to be removed. `subagents.modelScope` is the gate; a session-scoped `set_filter`
+is worth it only inside a pstack panel run, and has to be cleared afterwards.
 
 ## Re-checking before installing
 

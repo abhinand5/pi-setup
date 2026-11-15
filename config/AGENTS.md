@@ -56,6 +56,9 @@ One hard gate, in user config; do not weaken it without the user asking.
   `Model roles` table of `pstack_adapter status`). It carries no `modelFilter`: that filter also
   blocked every delegation that named no model, which broke `code-review` and any skill that lets
   a child inherit, so it was removed on purpose. `modelScope` is the gate.
+- The table above is a dated observation, not a standing fact. Re-verify it with `pi-models-check`
+  (one `max_tokens: 1` request per id, exit 1 on 404) before trusting it after a provider or
+  guardrail change. A 404 there is the cap, not local config.
 
 ## Rules
 

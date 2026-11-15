@@ -205,12 +205,30 @@ remove_sync_helper() {
   fi
 }
 
+remove_bin_helpers() {
+  local src dst
+  for src in "$ROOT"/bin/*; do
+    [[ -f "$src" ]] || continue
+    [[ "$(basename "$src")" == "pi" ]] && continue
+    dst="$BIN_DIR/$(basename "$src")"
+    [[ -e "$dst" || -L "$dst" ]] || continue
+    if [[ -L "$dst" ]] && [[ "$(readlink -f "$dst" 2>/dev/null || true)" == "$(readlink -f "$src" 2>/dev/null || true)" ]]; then
+      echo "Removing $(basename "$src") helper $dst"
+      run rm -f "$dst"
+    else
+      echo "Leaving non-pi-setup helper: $dst"
+    fi
+  done
+}
+
 remove_launcher
 remove_sync_helper
+remove_bin_helpers
 remove_restored_tree_entries "$ROOT/extensions" "$PI_HOME/extensions"
 remove_restored_tree_entries "$ROOT/themes" "$PI_HOME/themes"
 remove_restored_tree_entries "$ROOT/skills" "$PI_HOME/skills"
 remove_if_matches_file "$PI_HOME/AGENTS.md" "$ROOT/config/AGENTS.md"
+remove_if_matches_file "$PI_HOME/pi-pstack-adapter.json" "$ROOT/config/pi-pstack-adapter.example.json"
 remove_if_matches_file "$PI_HOME/settings.json" "$ROOT/config/settings.example.json"
 remove_if_matches_file "$PI_HOME/mcp.json" "$ROOT/config/mcp.example.json"
 remove_mcp_if_playwright_wrapper
