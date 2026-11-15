@@ -606,7 +606,7 @@ validate_json "$ROOT"/themes/*.json
 validate_themes
 validate_skills
 
-git add bin extensions themes skills config package.json README.md install.sh uninstall.sh sync.sh setup_sync.sh .gitignore docs
+git add bin extensions themes skills config docs tests package.json README.md install.sh uninstall.sh sync.sh setup_sync.sh .gitignore
 
 if git diff --cached --quiet; then
   echo "No Pi setup changes to sync."

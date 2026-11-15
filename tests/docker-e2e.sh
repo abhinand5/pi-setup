@@ -202,6 +202,21 @@ fi
 grep -q '"defaultProvider"' /root/.pi/agent/settings.json
 grep -q '"defaultModel"' /root/.pi/agent/settings.json
 
+printf "\nVERIFY MODEL CAP\n"
+jq -e ".subagents.modelScope.enforce == true" /root/.pi/agent/settings.json >/dev/null
+jq -e ".subagents.modelScope.strict == false" /root/.pi/agent/settings.json >/dev/null
+jq -e ".subagents.modelScope.allow | length == 14" /root/.pi/agent/settings.json >/dev/null
+jq -e ".subagents.defaultModel == \"openrouter/z-ai/glm-5.3-flash\"" /root/.pi/agent/settings.json >/dev/null
+jq -e ".subagents.modelScope as \$s | [\$s.agents[] | .allow[]] - \$s.allow | length == 0" /root/.pi/agent/settings.json >/dev/null
+jq -e "[.subagents.agentOverrides | keys[]] | (index(\"reviewer\") != null and index(\"oracle\") != null and index(\"evidence-auditor\") != null and index(\"uat-browser\") != null)" /root/.pi/agent/settings.json >/dev/null
+test -f /root/.pi/agent/pi-pstack-adapter.json
+jq -e --slurpfile s /root/.pi/agent/settings.json "[.models[] | split(\" \")[] | split(\":\")[0]] | unique | map(. as \$m | \$s[0].subagents.modelScope.allow | index(\$m)) | all(. != null)" /root/.pi/agent/pi-pstack-adapter.json >/dev/null
+test "$(grep -cE "^\| [^|]+ \| [0-9.]+ / " /root/.pi/agent/AGENTS.md)" -eq 14
+grep -qi "model cap" /root/.pi/agent/AGENTS.md
+test -L /root/.local/bin/pi-models-check
+test "$(/root/.local/bin/pi-models-check --list | wc -l)" -eq 14
+echo "model cap ok (14 ids, adapter roles inside the allow list, AGENTS.md table matches)"
+
 printf "\nVERIFY MODELS MERGE\n"
 test -f /root/.pi/agent/models.json
 jq -e ".providers.custom.baseUrl == \"https://example.invalid/v1\"" /root/.pi/agent/models.json >/dev/null
