@@ -1,6 +1,10 @@
 ---
 name: release-please
-description: Use before merging a PR, or when the repo has `.github/workflows/release-please.yml` / `release-please-config.json`; when choosing merge order; when waiting for the release PR `chore(main): release X.Y.Z`; when verifying the tag against `.release-please-manifest.json`; or when reporting merge results.
+description: >-
+  Use before merging a PR, or when the repo has `.github/workflows/release-please.yml` /
+  `release-please-config.json`; when choosing merge order; when waiting for the release PR
+  `chore(main): release X.Y.Z`; when verifying the tag against `.release-please-manifest.json`;
+  or when reporting merge results.
 ---
 
 # Мерж и релиз в репозиториях с release-please
@@ -12,9 +16,21 @@ description: Use before merging a PR, or when the repo has `.github/workflows/re
 
 ## Порядок
 
-1. Смержить **один** PR (предпочтительно squash, как в репозитории).
+1. Смержить **один** PR (предпочтительно squash, как в репозитории). Из worktree — **без
+   `--delete-branch`**: `gh pr merge <n> --squash --delete-branch` падает на `failed to run git:
+   fatal: 'main' is already used by worktree` (переключение локального чекаута на базовую ветку
+   упирается в другой worktree), хотя сам PR уже смержен — красный лог при зелёном результате.
+   Ветку удалять отдельной командой, состояние смотреть по `state`/`mergedAt`/`mergedBy` (поля
+   `merged` в `gh pr view --json` нет: `Unknown JSON field: merged`). #15611 п.6.
+
+   ```bash
+   gh pr merge <n> --squash
+   git push origin --delete <branch>
+   gh pr view <n> --json state,mergedAt,mergedBy
+   ```
 2. Дождаться релизного PR `chore(main): release X.Y.Z` — его открывает workflow на push в `main`
-   (несколько секунд, смотреть `gh pr list --state open --search 'release'`).
+   (несколько секунд, смотреть `gh pr list --state open --search 'release'`). Пока он открыт,
+   следующий PR не смержить: шаг `Release gate` в `ci.yml` красный и называет его номер.
 3. Смержить релизный PR и проверить результат: `gh release list --limit 1` и
    `git show origin/main:.release-please-manifest.json` — версия должна совпасть с тегом `vX.Y.Z`.
 4. Доложить строкой «смержено #N → релиз vX.Y.Z» и только потом браться за следующий PR.

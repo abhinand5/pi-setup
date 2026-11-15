@@ -68,6 +68,33 @@ session).
 | Tabs | `browser_tabs` |
 | Escape hatch | `browser_run_code_unsafe` (raw Playwright; use sparingly) |
 
+## Canonical call forms
+
+The field names are not the ones you would guess: a wrong name is a validation
+error, not a warning, and three calls were burned in one UAT on `ref` vs `target`
+and `query` vs `text` (#15611 п.9). Copy these shapes.
+
+| Call | Required fields | Optional |
+| --- | --- | --- |
+| `browser_click` | `target` (ref from the latest snapshot, or a unique selector) | `element`, `button`, `doubleClick`, `modifiers` |
+| `browser_type` | `target`, `text` | `element`, `submit`, `slowly` |
+| `browser_find` | `text` **or** `regex` (never both) | `maxResults`, `filename` |
+| `browser_take_screenshot` | `scale` (`"css"` or `"device"`) | `target`, `element`, `type`, `filename`, `fullPage` |
+| `browser_evaluate` | `function` | `target`, `element`, `filename` |
+| `browser_wait_for` | — (all optional) | `text`, `textGone`, `time` |
+| `browser_navigate` | `url` | — |
+| `browser_resize` | `width`, `height` | — |
+| `browser_press_key` | `key` | — |
+| `browser_select_option` | `target`, `values` | `element` |
+| `browser_console_messages` | `level` | `all`, `filename` |
+| `browser_network_requests` | `static` | `filter`, `all`, `filename` |
+
+There is no `ref`, no `query`, no `selector` field: the element handle is always
+`target`, and page search is always `text`/`regex`. `element` is only the
+human-readable label used in the permission prompt. When a call is rejected for
+an unknown field, run `describeTool`/`mcp describe` on that tool instead of
+retrying with another guess.
+
 ## Project reporting contracts
 
 This skill owns *mechanics*: launching, interacting, waiting, capturing, rescuing a
@@ -91,8 +118,8 @@ and report the duplication.
 
 ## Gotchas
 
-- **`browser_take_screenshot` requires `scale`** (`"css"` or `"device"`), despite
-  its schema annotation saying it defaults to `css`. Omitting it fails validation.
+- **`browser_take_screenshot` fails without `scale`**, even though its schema
+  annotation claims a `css` default — see *Canonical call forms*.
 - **Omit `filename` on screenshots.** Auto-named files land in the artifact
   directory (`$TMPDIR/browser-uat`, absolute paths in the tool result). An
   explicit filename resolves against the session cwd and litters the repo.
