@@ -8,9 +8,9 @@ set -euo pipefail
 #
 # Usage:
 #   ./install.sh                         # install sync helper + compact launcher only
-#   ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json, mcp.json,
-#                                        # AGENTS.md and pi-pstack-adapter.json, and merge
-#                                        # config/vscode-keybindings.json into VS Code
+#   ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json and mcp.json,
+#                                        # overwrite AGENTS.md/pi-pstack-adapter.json when
+#                                        # restoring, and merge config/vscode-keybindings.json
 #   ./install.sh --restore               # also restore extensions/themes/skills from this repo
 #   ./install.sh --restore --dry-run     # preview changes without writing files
 #   ./install.sh --restore --backup      # save current live files before replacing them
@@ -61,9 +61,9 @@ used to back up that live setup to GitHub and recreate it on any machine.
 
 Usage:
   ./install.sh                         # install sync helper + compact launcher only
-  ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json, mcp.json,
-                                       # AGENTS.md and pi-pstack-adapter.json, and merge
-                                       # config/vscode-keybindings.json into VS Code
+  ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json and mcp.json,
+                                       # overwrite AGENTS.md/pi-pstack-adapter.json when
+                                       # restoring, and merge config/vscode-keybindings.json
   ./install.sh --restore               # also restore extensions/themes/skills into ~/.pi/agent
   ./install.sh --restore --dry-run     # preview changes without writing files
   ./install.sh --restore --backup      # save current live files before replacing them
@@ -600,7 +600,6 @@ PY
     copy_path "$ROOT/config/playwright-mcp.json" "$PI_HOME/playwright-mcp.json"
   fi
   merge_models_example
-  install_pstack_adapter_config
   install_vscode_keybindings
   remove_legacy_package_reference
 else
