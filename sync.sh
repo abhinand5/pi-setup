@@ -338,6 +338,16 @@ for key in ("enabledModels",):
         data.pop(key)
         print(f"settings ok: removed local-only {key}")
 
+# subagents.modelScope is the delegation gate (see config/AGENTS.md). The allow
+# list is the OpenRouter workspace cap, which is a provider fact and therefore
+# portable; `strict` is a local policy choice. Ship the gate non-strict: an
+# unknown id is still rejected, but an explicit override is not fatal on a
+# machine whose cap differs from this one.
+scope = data.get("subagents", {}).get("modelScope")
+if isinstance(scope, dict) and scope.get("strict") is not False:
+    scope["strict"] = False
+    print("settings ok: example ships subagents.modelScope.strict=false")
+
 packages = data.get("packages")
 if isinstance(packages, list):
     kept = []
@@ -371,6 +381,131 @@ for path in sys.argv[1:]:
     with open(path, 'r', encoding='utf-8') as f:
         json.load(f)
     print('json ok:', path)
+PY
+}
+
+copy_pstack_adapter_example() {
+  local src="$PI_HOME/pi-pstack-adapter.json"
+  local dst="$ROOT/config/pi-pstack-adapter.example.json"
+  if [[ ! -f "$src" ]]; then
+    echo "pstack adapter config: no $src; leaving $dst untouched"
+    return 0
+  fi
+  cp "$src" "$dst"
+  echo "pstack adapter config: pinned roles/panels backed up into $dst"
+}
+
+# models.json is machine-specific (API keys, custom endpoints) so it is never
+# copied wholesale. The portable part is providers.<name>.modelOverrides, and it
+# drifts silently: a pin added live never reaches the example, so a restore
+# brings back stale routing. Merge the live overrides into the example instead.
+sync_models_overrides() {
+  local live="$PI_HOME/models.json"
+  local example="$ROOT/config/models.example.json"
+  [[ -f "$live" && -f "$example" ]] || return 0
+  python3 - <<'PY' "$live" "$example"
+import json
+import sys
+from pathlib import Path
+
+live_path, example_path = Path(sys.argv[1]), Path(sys.argv[2])
+live = json.loads(live_path.read_text())
+example = json.loads(example_path.read_text())
+
+example.setdefault("$schema", live.get("$schema", "https://pi.dev/schemas/models.schema.json"))
+target = example.setdefault("providers", {})
+added = []
+for name, provider in (live.get("providers") or {}).items():
+    overrides = (provider or {}).get("modelOverrides")
+    if not isinstance(overrides, dict) or not overrides:
+        continue
+    bucket = target.setdefault(name, {}).setdefault("modelOverrides", {})
+    for model, rule in overrides.items():
+        if bucket.get(model) != rule:
+            added.append(f"{name}:{model}")
+            bucket[model] = rule
+
+if not added:
+    print("models ok: example already carries every live modelOverride")
+    raise SystemExit(0)
+example_path.write_text(json.dumps(example, indent=2) + "\n")
+print("models ok: example updated from live overrides: " + ", ".join(sorted(added)))
+PY
+}
+
+# The allow list, the pstack role pinning and the AGENTS.md table are three
+# copies of one fact: which model ids the provider actually serves. A restore
+# from a stale copy is what loses a delegation run, so refuse to sync when they
+# disagree.
+validate_models() {
+  python3 - <<'PY' "$ROOT"
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+settings_path = root / "config" / "settings.example.json"
+adapter_path = root / "config" / "pi-pstack-adapter.example.json"
+agents_path = root / "config" / "AGENTS.md"
+errors = []
+
+def normalize(model_id):
+    for prefix in ("openrouter/", "routerai/"):
+        if model_id.startswith(prefix):
+            return model_id[len(prefix):]
+    return model_id
+
+if not settings_path.is_file():
+    raise SystemExit("models: no config/settings.example.json to validate")
+settings = json.loads(settings_path.read_text())
+scope = (settings.get("subagents") or {}).get("modelScope") or {}
+allow = list(scope.get("allow") or [])
+if not allow:
+    raise SystemExit("models: settings.example.json has no subagents.modelScope.allow")
+allow_norm = {normalize(m) for m in allow}
+print(f"models ok: modelScope.allow carries {len(allow)} ids")
+
+for agent, rule in sorted((scope.get("agents") or {}).items()):
+    extra = sorted(set(rule.get("allow") or []) - set(allow))
+    if extra:
+        errors.append(f"modelScope.agents.{agent} names ids outside modelScope.allow: {extra}")
+
+if adapter_path.is_file():
+    adapter = json.loads(adapter_path.read_text())
+    ids = set()
+    for role, spec in sorted((adapter.get("models") or {}).items()):
+        for token in str(spec).split():
+            model = token.split(":", 1)[0]
+            if "/" not in model:
+                continue
+            ids.add(model)
+    extra = sorted(ids - set(allow))
+    if extra:
+        errors.append(f"config/pi-pstack-adapter.example.json names ids outside modelScope.allow: {extra}")
+    print(f"models ok: {len(ids)} adapter role/panel ids are inside the allow list")
+
+if agents_path.is_file():
+    table = set()
+    for line in agents_path.read_text().splitlines():
+        match = re.match(r"^\|\s*`([^`]+)`\s*\|", line)
+        if match:
+            table.add(normalize(match.group(1)))
+    if not table:
+        print("models warning: no `| `id` |` rows found in config/AGENTS.md; skipped table check")
+    elif table != allow_norm:
+        only_table = sorted(table - allow_norm)
+        only_allow = sorted(allow_norm - table)
+        errors.append(
+            "config/AGENTS.md allowed table and modelScope.allow disagree; "
+            f"only in AGENTS.md: {only_table}, only in modelScope: {only_allow}"
+        )
+    else:
+        print(f"models ok: config/AGENTS.md table matches modelScope.allow ({len(table)} ids)")
+
+if errors:
+    print("\n".join(f"models error: {e}" for e in errors), file=sys.stderr)
+    raise SystemExit(1)
 PY
 }
 
@@ -430,7 +565,7 @@ cd "$ROOT"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/AGENTS.md"
+  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/pi-pstack-adapter.example.json"
   exit 0
 fi
 
@@ -441,6 +576,8 @@ copy_dir_contents "$PI_HOME/themes" "$ROOT/themes"
 copy_selected_skills
 mkdir -p "$ROOT/config"
 copy_settings_example
+copy_pstack_adapter_example
+sync_models_overrides
 if [[ -f "$PI_HOME/mcp.json" ]]; then
   cp "$PI_HOME/mcp.json" "$ROOT/config/mcp.example.json"
 fi
@@ -452,6 +589,13 @@ if [[ -f "$PI_HOME/AGENTS.md" ]]; then
 fi
 
 validate_json "$ROOT/package.json" "$ROOT/config/settings.example.json"
+if [[ -f "$ROOT/config/models.example.json" ]]; then
+  validate_json "$ROOT/config/models.example.json"
+fi
+if [[ -f "$ROOT/config/pi-pstack-adapter.example.json" ]]; then
+  validate_json "$ROOT/config/pi-pstack-adapter.example.json"
+fi
+validate_models
 if [[ -f "$ROOT/config/mcp.example.json" ]]; then
   validate_json "$ROOT/config/mcp.example.json"
 fi
@@ -462,7 +606,7 @@ validate_json "$ROOT"/themes/*.json
 validate_themes
 validate_skills
 
-git add bin extensions themes skills config package.json README.md install.sh uninstall.sh sync.sh setup_sync.sh .gitignore
+git add bin extensions themes skills config package.json README.md install.sh uninstall.sh sync.sh setup_sync.sh .gitignore docs
 
 if git diff --cached --quiet; then
   echo "No Pi setup changes to sync."

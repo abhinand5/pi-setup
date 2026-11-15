@@ -8,8 +8,9 @@ set -euo pipefail
 #
 # Usage:
 #   ./install.sh                         # install sync helper + compact launcher only
-#   ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json and mcp.json
-#                                        # and merge config/vscode-keybindings.json into VS Code
+#   ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json, mcp.json,
+#                                        # AGENTS.md and pi-pstack-adapter.json, and merge
+#                                        # config/vscode-keybindings.json into VS Code
 #   ./install.sh --restore               # also restore extensions/themes/skills from this repo
 #   ./install.sh --restore --dry-run     # preview changes without writing files
 #   ./install.sh --restore --backup      # save current live files before replacing them
@@ -60,8 +61,9 @@ used to back up that live setup to GitHub and recreate it on any machine.
 
 Usage:
   ./install.sh                         # install sync helper + compact launcher only
-  ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json and mcp.json
-                                       # and merge config/vscode-keybindings.json into VS Code
+  ./install.sh --copy-config           # also overwrite ~/.pi/agent/settings.json, mcp.json,
+                                       # AGENTS.md and pi-pstack-adapter.json, and merge
+                                       # config/vscode-keybindings.json into VS Code
   ./install.sh --restore               # also restore extensions/themes/skills into ~/.pi/agent
   ./install.sh --restore --dry-run     # preview changes without writing files
   ./install.sh --restore --backup      # save current live files before replacing them
@@ -172,6 +174,26 @@ install_agents_md() {
   copy_path "$src" "$dst"
 }
 
+# pi-pstack-adapter.json pins every pstack role and panel to a model id that the
+# provider actually serves. With the roles unset, the adapter passes `pstack:<role>`
+# and the child inherits the parent's model, which is how a delegation escaped to a
+# model outside the workspace cap. Same rule as AGENTS.md: restore only when there
+# is no live copy, --copy-config asks for the overwrite.
+install_pstack_adapter_config() {
+  local src="$ROOT/config/pi-pstack-adapter.example.json"
+  local dst="$PI_HOME/pi-pstack-adapter.json"
+  [[ -f "$src" ]] || return 0
+  if [[ -f "$dst" && "$COPY_CONFIG" != "1" ]]; then
+    if cmp -s "$src" "$dst"; then
+      echo "pi-pstack-adapter.json is up to date."
+    else
+      echo "pi-pstack-adapter.json differs from the repo copy; leaving it (use --copy-config to overwrite)."
+    fi
+    return 0
+  fi
+  copy_path "$src" "$dst"
+}
+
 # Merge config/models.example.json into the live models.json instead of replacing it.
 # models.json holds machine-specific providers (API keys, custom endpoints), so a
 # straight copy would destroy them; only the example's keys are overlaid.
@@ -267,7 +289,7 @@ make_backup() {
       touch "$BACKUP_DIR/.absent-$name"
     fi
   done
-  for name in settings.json mcp.json playwright-mcp.json models.json; do
+  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json; do
     if [[ -f "$PI_HOME/$name" ]]; then
       cp "$PI_HOME/$name" "$BACKUP_DIR/$name"
     else
@@ -303,7 +325,7 @@ revert_backup() {
       echo "Backup has no $name/ state; leaving $PI_HOME/$name unchanged."
     fi
   done
-  for name in settings.json mcp.json playwright-mcp.json models.json; do
+  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json; do
     if [[ -f "$backup/$name" ]]; then
       copy_path "$backup/$name" "$PI_HOME/$name"
     elif [[ -f "$backup/.absent-$name" ]]; then
@@ -508,6 +530,7 @@ if [[ "$RESTORE" == "1" ]]; then
   copy_dir_contents "$ROOT/themes" "$PI_HOME/themes"
   copy_dir_contents "$ROOT/skills" "$PI_HOME/skills"
   install_agents_md
+  install_pstack_adapter_config
   if compgen -G "$ROOT/skills/browser-uat/scripts/*.sh" >/dev/null; then
     run chmod +x "$PI_HOME/skills/browser-uat/scripts/"*.sh
   fi
@@ -577,6 +600,7 @@ PY
     copy_path "$ROOT/config/playwright-mcp.json" "$PI_HOME/playwright-mcp.json"
   fi
   merge_models_example
+  install_pstack_adapter_config
   install_vscode_keybindings
   remove_legacy_package_reference
 else
@@ -680,6 +704,27 @@ install_launcher() {
 }
 
 install_launcher
+
+# pi-models-check probes every id in subagents.modelScope.allow so "the catalog
+# lists it" is never mistaken for "the provider serves it".
+install_bin_helpers() {
+  local src dst
+  for src in "$ROOT"/bin/*; do
+    [[ -f "$src" ]] || continue
+    dst="$BIN_DIR/$(basename "$src")"
+    [[ "$(basename "$src")" == "pi" ]] && continue
+    run mkdir -p "$BIN_DIR"
+    run rm -f "$dst"
+    run ln -s "$src" "$dst"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      echo "would link $(basename "$src") -> $dst"
+    else
+      echo "Linked $(basename "$src") -> $dst"
+    fi
+  done
+}
+
+install_bin_helpers
 
 if [[ -n "$BACKUP_DIR" ]]; then
   echo "To revert this install: $ROOT/install.sh --revert '$BACKUP_DIR'"

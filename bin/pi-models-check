@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# Probe every model id in the delegation allow list against the provider.
+#
+# Why: `pstack_adapter models`, `subagent({ action: "list" })` and
+# `models-store.json` list every id Pi knows, not every id the provider serves.
+# An OpenRouter workspace guardrail can cap the workspace to a subset, and a
+# delegation to anything outside it dies with
+#   404 ... 0 endpoints out of N requested are available matching your guardrail restrictions
+# This script turns "the catalog lists it" into "the provider answered 200".
+#
+# The allow list is read from subagents.modelScope.allow in
+# ~/.pi/agent/settings.json — the same list subagent launches are gated on, so
+# there is one source of truth. API keys come from the environment first, then
+# from ~/.pi/agent/models.json (providers.<name>.apiKey).
+#
+# Usage:
+#   pi-models-check                    # probe every id in the allow list
+#   pi-models-check --list             # print the ids, do not call the network
+#   pi-models-check <id> [<id> ...]    # probe explicit ids (provider/id or bare id)
+#   pi-models-check --timeout 30       # per-request timeout in seconds (default 20)
+#   pi-models-check --quiet            # only failures and the summary
+#   pi-models-check --json             # machine-readable result on stdout
+#
+# Exit codes: 0 every id answered 200, 1 at least one id failed, 2 usage/setup.
+
+set -uo pipefail
+
+PI_HOME="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+SETTINGS="$PI_HOME/settings.json"
+MODELS="$PI_HOME/models.json"
+TIMEOUT=20
+QUIET=0
+JSON=0
+LIST_ONLY=0
+EXPLICIT=()
+
+usage() {
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --list) LIST_ONLY=1; shift ;;
+    --quiet|-q) QUIET=1; shift ;;
+    --json) JSON=1; shift ;;
+    --timeout) TIMEOUT="${2:?missing value for --timeout}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *) EXPLICIT+=("$1"); shift ;;
+  esac
+done
+
+for tool in curl python3; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "error: $tool is required" >&2; exit 2; }
+done
+
+if [[ "${#EXPLICIT[@]}" -gt 0 ]]; then
+  IDS="$(printf '%s\n' "${EXPLICIT[@]}")"
+else
+  [[ -f "$SETTINGS" ]] || { echo "error: no settings.json at $SETTINGS" >&2; exit 2; }
+  IDS="$(python3 - "$SETTINGS" <<'PY'
+import json, sys
+from pathlib import Path
+
+settings = json.loads(Path(sys.argv[1]).read_text())
+allow = ((settings.get("subagents") or {}).get("modelScope") or {}).get("allow") or []
+if not allow:
+    sys.exit("error: subagents.modelScope.allow is empty or missing")
+print("\n".join(allow))
+PY
+)" || exit 2
+fi
+
+if [[ "$LIST_ONLY" == "1" ]]; then
+  printf '%s\n' "$IDS"
+  exit 0
+fi
+
+# provider base URL and key lookup, resolved once per provider
+provider_base() {
+  case "$1" in
+    openrouter) printf '%s\n' "https://openrouter.ai/api/v1" ;;
+    routerai)
+      python3 - "$MODELS" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+data = json.loads(path.read_text())
+print((data.get("providers", {}).get("routerai", {}) or {}).get("baseUrl", "").rstrip("/"))
+PY
+      ;;
+  esac
+}
+
+provider_key() {
+  local env_name
+  env_name="$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')_API_KEY"
+  if [[ -n "${!env_name:-}" ]]; then
+    printf '%s' "${!env_name}"
+    return 0
+  fi
+  python3 - "$MODELS" "$1" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(0)
+data = json.loads(path.read_text())
+print((data.get("providers", {}).get(sys.argv[2], {}) or {}).get("apiKey", ""))
+PY
+}
+
+# Pi applies settings.httpProxy to its own clients; curl only reads the env, so
+# pass the same proxy when the shell has none.
+PROXY_ARGS=()
+if [[ -z "${HTTPS_PROXY:-${https_proxy:-}}" && -f "$SETTINGS" ]]; then
+  proxy="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("httpProxy",""))' "$SETTINGS" 2>/dev/null || true)"
+  [[ -n "$proxy" ]] && PROXY_ARGS=(--proxy "$proxy")
+fi
+
+ok=0
+fail=0
+warn=0
+results=()
+failed_ids=()
+body_file="$(mktemp)"
+trap 'rm -f "$body_file"' EXIT
+
+[[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "STATUS" "HTTP" "MODEL"
+
+while IFS= read -r raw; do
+  [[ -n "$raw" ]] || continue
+  case "$raw" in
+    openrouter/*) provider="openrouter"; model="${raw#openrouter/}" ;;
+    routerai/*) provider="routerai"; model="${raw#routerai/}" ;;
+    */*) provider="openrouter"; model="$raw" ;;
+    *) provider="openrouter"; model="$raw" ;;
+  esac
+
+  base="$(provider_base "$provider")"
+  if [[ -z "$base" ]]; then
+    fail=$((fail + 1))
+    failed_ids+=("$raw")
+    results+=("$raw|error|no baseUrl for provider $provider")
+    [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ERROR" "-" "$raw (no baseUrl for provider $provider)"
+    continue
+  fi
+  key="$(provider_key "$provider")"
+  if [[ -z "$key" ]]; then
+    fail=$((fail + 1))
+    failed_ids+=("$raw")
+    results+=("$raw|error|no API key for provider $provider")
+    [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ERROR" "-" "$raw (no API key for provider $provider)"
+    continue
+  fi
+
+  payload="$(python3 - "$model" <<'PY'
+import json, sys
+print(json.dumps({
+    "model": sys.argv[1],
+    "max_tokens": 1,
+    "messages": [{"role": "user", "content": "ping"}],
+}))
+PY
+)"
+  code="$(curl -sS -o "$body_file" -w '%{http_code}' --max-time "$TIMEOUT" \
+    ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"} \
+    -H "Authorization: Bearer $key" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "$base/chat/completions" 2>/dev/null || printf '000')"
+
+  case "$code" in
+    200)
+      ok=$((ok + 1))
+      results+=("$raw|ok|200")
+      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ok" "200" "$raw"
+      ;;
+    404)
+      fail=$((fail + 1))
+      failed_ids+=("$raw")
+      detail="$(python3 - "$body_file" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+except Exception:
+    raise SystemExit(0)
+err = data.get("error") or {}
+print((err.get("message") if isinstance(err, dict) else str(err)) or "")
+PY
+)"
+      [[ -n "$detail" ]] || detail="404 (not served: outside the provider cap or unknown id)"
+      results+=("$raw|fail|$detail")
+      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "FAIL" "404" "$raw — $detail"
+      ;;
+    000)
+      warn=$((warn + 1))
+      results+=("$raw|warn|no response (network/proxy/timeout)")
+      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "WARN" "-" "$raw (no response: network, proxy or timeout)"
+      ;;
+    *)
+      warn=$((warn + 1))
+      results+=("$raw|warn|HTTP $code")
+      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "WARN" "$code" "$raw"
+      ;;
+  esac
+done <<<"$IDS"
+
+if [[ "$JSON" == "1" ]]; then
+  printf '%s\n' ${results[@]+"${results[@]}"} | python3 -c '
+import json, sys
+rows = []
+for line in sys.stdin.read().splitlines():
+    if not line.strip():
+        continue
+    model, status, detail = (line.split("|", 2) + ["", ""])[:3]
+    rows.append({"model": model, "status": status, "detail": detail})
+print(json.dumps({"checked_on": __import__("datetime").date.today().isoformat(), "results": rows}, indent=2))
+'
+else
+  printf '\n%d ok, %d failed, %d inconclusive (%s)\n' "$ok" "$fail" "$warn" "$(date +%F)"
+  if [[ "$fail" -gt 0 ]]; then
+    printf 'failed ids:\n'
+    printf '  %s\n' "${failed_ids[@]}"
+    printf 'A 404 here is the provider cap, not a local config problem: remove the id from\n'
+    printf 'subagents.modelScope.allow and from the table in config/AGENTS.md, or have the\n'
+    printf 'workspace guardrail widened. Do not retry the id.\n'
+  fi
+fi
+
+[[ "$fail" -eq 0 ]]
