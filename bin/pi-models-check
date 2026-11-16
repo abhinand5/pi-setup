@@ -23,6 +23,8 @@
 #
 # Exit codes: 0 every id answered 200, 1 at least one id failed, 2 usage/setup.
 
+# No `-e`: one failing probe must not abort the sweep, and the exit status is
+# decided by the final `[[ "$fail" -eq 0 ]]`, not by the last command run.
 set -uo pipefail
 
 PI_HOME="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
@@ -126,6 +128,30 @@ failed_ids=()
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
 
+# record <status> <http> <model> [detail] — counters, machine rows and the human
+# line live in one place, so the five outcomes cannot drift apart.
+record() {
+  local status="$1"
+  local code="$2"
+  local model="$3"
+  local detail="${4:-}"
+  case "$status" in
+    ok) ok=$((ok + 1)) ;;
+    fail|error) fail=$((fail + 1)); failed_ids+=("$model") ;;
+    warn) warn=$((warn + 1)) ;;
+  esac
+  results+=("$model|$status|${detail:-$code}")
+  if [[ "$JSON" == "1" || "$QUIET" == "1" ]]; then
+    return 0
+  fi
+  case "$status" in
+    ok) printf '%-6s %-8s %s\n' "ok" "$code" "$model" ;;
+    fail) printf '%-6s %-8s %s\n' "FAIL" "$code" "$model — $detail" ;;
+    error) printf '%-6s %-8s %s\n' "ERROR" "$code" "$model ($detail)" ;;
+    warn) printf '%-6s %-8s %s\n' "WARN" "$code" "$model ($detail)" ;;
+  esac
+}
+
 [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "STATUS" "HTTP" "MODEL"
 
 while IFS= read -r raw; do
@@ -139,18 +165,12 @@ while IFS= read -r raw; do
 
   base="$(provider_base "$provider")"
   if [[ -z "$base" ]]; then
-    fail=$((fail + 1))
-    failed_ids+=("$raw")
-    results+=("$raw|error|no baseUrl for provider $provider")
-    [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ERROR" "-" "$raw (no baseUrl for provider $provider)"
+    record error "-" "$raw" "no baseUrl for provider $provider"
     continue
   fi
   key="$(provider_key "$provider")"
   if [[ -z "$key" ]]; then
-    fail=$((fail + 1))
-    failed_ids+=("$raw")
-    results+=("$raw|error|no API key for provider $provider")
-    [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ERROR" "-" "$raw (no API key for provider $provider)"
+    record error "-" "$raw" "no API key for provider $provider"
     continue
   fi
 
@@ -174,14 +194,8 @@ PY
   [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
 
   case "$code" in
-    200)
-      ok=$((ok + 1))
-      results+=("$raw|ok|200")
-      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "ok" "200" "$raw"
-      ;;
+    200) record ok "200" "$raw" ;;
     404)
-      fail=$((fail + 1))
-      failed_ids+=("$raw")
       detail="$(python3 - "$body_file" <<'PY' 2>/dev/null || true
 import json, sys
 from pathlib import Path
@@ -193,20 +207,10 @@ err = data.get("error") or {}
 print((err.get("message") if isinstance(err, dict) else str(err)) or "")
 PY
 )"
-      [[ -n "$detail" ]] || detail="404 (not served: outside the provider cap or unknown id)"
-      results+=("$raw|fail|$detail")
-      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "FAIL" "404" "$raw — $detail"
+      record fail "404" "$raw" "${detail:-404 (not served: outside the provider cap or unknown id)}"
       ;;
-    000)
-      warn=$((warn + 1))
-      results+=("$raw|warn|no response (network/proxy/timeout)")
-      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "WARN" "-" "$raw (no response: network, proxy or timeout)"
-      ;;
-    *)
-      warn=$((warn + 1))
-      results+=("$raw|warn|HTTP $code")
-      [[ "$JSON" == "1" || "$QUIET" == "1" ]] || printf '%-6s %-8s %s\n' "WARN" "$code" "$raw"
-      ;;
+    000) record warn "-" "$raw" "no response: network, proxy or timeout" ;;
+    *) record warn "$code" "$raw" "HTTP $code" ;;
   esac
 done <<<"$IDS"
 

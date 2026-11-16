@@ -86,7 +86,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - `micme.example.json` — Micme voice dictation wired to the local Handy CLI (see [Voice dictation](#voice-dictation-handy--micme))
   - `playwright-mcp.json` — base Playwright MCP config the Xvfb wrapper derives from (see [Browser automation](#browser-automation-playwright-mcp))
   - `models.example.json` — the OpenRouter vendor pin; `--copy-config` merges it into `models.json` instead of replacing it
-  - `pi-pstack-adapter.example.json` — every pstack role and panel pinned to an id the provider serves; restored only when `~/.pi/agent/pi-pstack-adapter.json` is absent, `--copy-config` overwrites
+  - `pi-pstack-adapter.example.json` — every pstack role and panel pinned to an id the provider serves; `--restore` copies it only when `~/.pi/agent/pi-pstack-adapter.json` is absent, `--restore --copy-config` overwrites
   - `AGENTS.md` — the delegation model policy: the 14 ids the OpenRouter workspace guardrail serves, with prices and assigned roles; the blocked list (`deepseek-v4-pro`, `google/*`/`gemini-*`, `openai/*`/`gpt-*`, all `routerai/*`); no Cursor model slugs; `pstack:<role>` instead of a model (see [pstack skills](#pstack-skills-pi-pstack-adapter))
 
 ## Set up from GitHub on a machine
@@ -172,6 +172,7 @@ Warnings:
 
 - `--restore` replaces the current contents of those live resource directories.
 - `--copy-config` overwrites `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json`, and merges (does not overwrite) `~/.pi/agent/models.json`.
+- `--restore` also copies `~/.pi/agent/AGENTS.md` and `~/.pi/agent/pi-pstack-adapter.json` when they are absent; add `--copy-config` to overwrite them. Without `--restore` neither file is touched.
 - `--copy-config` only *adds* missing VS Code keybindings; it never rewrites or removes existing ones. Set `VSCODE_KEYBINDINGS=/path/to/keybindings.json` to target a non-default location (e.g. VS Code Insiders or a profile).
 - Use `--dry-run` first if you only want to preview the restore.
 
@@ -437,8 +438,8 @@ The roles then need models that the provider actually serves, and the adapter pa
 `pstack:<role>` through to whatever `~/.pi/agent/pi-pstack-adapter.json` pins. All 12 roles and
 panels are pinned there to ids inside the workspace cap; the file is versioned here as
 `config/pi-pstack-adapter.example.json`. `install.sh --restore` copies both `AGENTS.md` and
-`pi-pstack-adapter.json` only when the live file is absent; `--copy-config` overwrites. The
-enforcement layer behind both is `subagents.modelScope` in `settings.json`, and `pi-models-check`
+`pi-pstack-adapter.json` only when the live file is absent; `--restore --copy-config` overwrites.
+The enforcement layer behind both is `subagents.modelScope` in `settings.json`, and `pi-models-check`
 proves the allow list against the provider. Background and the evidence:
 [docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-outside-the-cap).
 

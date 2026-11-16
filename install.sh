@@ -156,38 +156,22 @@ copy_dir_contents() {
   run cp -R "$src"/. "$dst"/
 }
 
-# AGENTS.md holds always-on instructions for every Pi session. Unlike skills and
-# themes, a live copy can carry machine-local rules, so restore it only when there
-# is none; --copy-config asks for the overwrite.
-install_agents_md() {
-  local src="$ROOT/config/AGENTS.md"
-  local dst="$PI_HOME/AGENTS.md"
+# AGENTS.md holds always-on instructions for every Pi session, and
+# pi-pstack-adapter.json pins every pstack role and panel to a model id the provider
+# actually serves (with the roles unset the adapter passes `pstack:<role>` and the
+# child inherits the parent's model, which is how a delegation escaped the workspace
+# cap). Both can carry machine-local rules, so restore each only when the live copy
+# is absent; --restore --copy-config asks for the overwrite.
+install_config_if_absent() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
   [[ -f "$src" ]] || return 0
   if [[ -f "$dst" && "$COPY_CONFIG" != "1" ]]; then
     if cmp -s "$src" "$dst"; then
-      echo "AGENTS.md is up to date."
+      echo "$label is up to date."
     else
-      echo "AGENTS.md differs from the repo copy; leaving it (use --copy-config to overwrite)."
-    fi
-    return 0
-  fi
-  copy_path "$src" "$dst"
-}
-
-# pi-pstack-adapter.json pins every pstack role and panel to a model id that the
-# provider actually serves. With the roles unset, the adapter passes `pstack:<role>`
-# and the child inherits the parent's model, which is how a delegation escaped to a
-# model outside the workspace cap. Same rule as AGENTS.md: restore only when there
-# is no live copy, --copy-config asks for the overwrite.
-install_pstack_adapter_config() {
-  local src="$ROOT/config/pi-pstack-adapter.example.json"
-  local dst="$PI_HOME/pi-pstack-adapter.json"
-  [[ -f "$src" ]] || return 0
-  if [[ -f "$dst" && "$COPY_CONFIG" != "1" ]]; then
-    if cmp -s "$src" "$dst"; then
-      echo "pi-pstack-adapter.json is up to date."
-    else
-      echo "pi-pstack-adapter.json differs from the repo copy; leaving it (use --copy-config to overwrite)."
+      echo "$label differs from the repo copy; leaving it (use --restore --copy-config to overwrite)."
     fi
     return 0
   fi
@@ -529,8 +513,8 @@ if [[ "$RESTORE" == "1" ]]; then
   copy_dir_contents "$ROOT/extensions" "$PI_HOME/extensions"
   copy_dir_contents "$ROOT/themes" "$PI_HOME/themes"
   copy_dir_contents "$ROOT/skills" "$PI_HOME/skills"
-  install_agents_md
-  install_pstack_adapter_config
+  install_config_if_absent "$ROOT/config/AGENTS.md" "$PI_HOME/AGENTS.md" "AGENTS.md"
+  install_config_if_absent "$ROOT/config/pi-pstack-adapter.example.json" "$PI_HOME/pi-pstack-adapter.json" "pi-pstack-adapter.json"
   if compgen -G "$ROOT/skills/browser-uat/scripts/*.sh" >/dev/null; then
     run chmod +x "$PI_HOME/skills/browser-uat/scripts/"*.sh
   fi

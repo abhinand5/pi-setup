@@ -485,14 +485,20 @@ if adapter_path.is_file():
         errors.append(f"config/pi-pstack-adapter.example.json names ids outside modelScope.allow: {extra}")
     print(f"models ok: {len(ids)} adapter role/panel ids are inside the allow list")
 
-if agents_path.is_file():
+# config/AGENTS.md is a required repo artifact, not an optional one: sync.sh
+# overwrites it wholesale from the live file, so a live AGENTS.md that lost its
+# table would otherwise commit cleanly and the next restore would ship a
+# policy-less policy file.
+if not agents_path.is_file():
+    errors.append("config/AGENTS.md is missing; the delegation policy must be versioned here")
+else:
     table = set()
     for line in agents_path.read_text().splitlines():
         match = re.match(r"^\|\s*`([^`]+)`\s*\|", line)
         if match:
             table.add(normalize(match.group(1)))
     if not table:
-        print("models warning: no `| `id` |` rows found in config/AGENTS.md; skipped table check")
+        errors.append("config/AGENTS.md carries no `| `id` |` rows; the allowed table is required")
     elif table != allow_norm:
         only_table = sorted(table - allow_norm)
         only_allow = sorted(allow_norm - table)

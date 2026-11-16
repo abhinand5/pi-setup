@@ -45,7 +45,9 @@ One hard gate, in user config; do not weaken it without the user asking.
 
 - `~/.pi/agent/settings.json` — `subagents.modelScope` is `enforce: true, strict: true` with the 14
   ids as the allow list, so any launch naming a model outside the cap is rejected before the child
-  starts, whoever started it (pstack skill, workflow, or a bare `subagent` call).
+  starts, whoever started it (pstack skill, workflow, or a bare `subagent` call). The repo example
+  ships the same list with `strict: false`, so a machine whose cap differs still launches instead of
+  refusing every call.
 - `subagents.defaultModel` is `openrouter/z-ai/glm-5.3-flash` and every bundled agent has an
   explicit `agentOverrides.<name>.model`, so a call that names no model lands on a capped model
   instead of the parent's. `inherit` passes only while the parent session model is itself inside

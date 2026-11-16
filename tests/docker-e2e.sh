@@ -113,7 +113,7 @@ set -euo pipefail
 echo "ubuntu=$PRETTY_NAME"
 
 apt-get update >/dev/null
-DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates jq >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates jq python3 curl >/dev/null
 
 if command -v python3 >/dev/null 2>&1; then
   echo "python3_before_restore=present"
