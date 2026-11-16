@@ -37,11 +37,22 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
    redmine issues list --parent <epic-id> --status '*' -o json | jq -r '.[] | "\(.id) \(.status.name) \(.subject)"'
    ```
 
-   Mark each candidate the same way: `already closed in #NNNNN`, `already landed in <merge sha>`, or `new`.
+   Read the **bodies** of open children, not just their subjects. A title rarely names the mechanism: «отклонение контрольной суммы у замороженной строки» did not read as «итоги не читают снимок», so #15660 was filed an hour after #15643 while the same work already stood as item 2 of #15656 (#15661 п.3). Grep each open child's description for the finding's anchors — class or field name, `file.php:NN`, a distinctive constant:
+
+   ```bash
+   redmine issues list --parent <epic-id> --status '*' -o json \
+     | jq -r '.[] | select(.status.name != "Закрыта" and .status.name != "Отклонена") | .id' \
+     | while read -r id; do
+         redmine issues get "$id" -o json | jq -r .description \
+           | grep -nE '<anchor1>|<anchor2>' | sed "s|^|#$id:|"
+       done
+   ```
+
+   Mark each candidate the same way: `already closed in #NNNNN`, `already landed in <merge sha>`, `already filed as item N of #NNNNN`, or `new`.
 
 5. Present these candidates to the user, in order of severity.
 
-6. After the presentation, offer to file the findings as a child issue of the current epic (the epic the work belongs to, not the task): one issue for the whole list, numbered findings inside, with a note that items may overlap already-merged slices. Do not create it without the user's word; when they say yes, pass the description from a file — `redmine-file issues create --project … --parent <epic> --description-file /tmp/retro.txt` — so the text never rides in the conversation.
+6. After the presentation, offer to file the findings as a child issue of the current epic (the epic the work belongs to, not the task): one issue for the whole list, numbered findings inside, with a note that items may overlap already-merged slices. Every new issue carries a line «сверено с #NNNNN, пересечение такое-то» (or «не пересекается») from step 4 — an issue filed without it is the failure this step exists to prevent. Do not create it without the user's word; when they say yes, pass the description from a file — `redmine-file issues create --project … --parent <epic> --description-file /tmp/retro.txt` — so the text never rides in the conversation.
 
 ## Reference
 
