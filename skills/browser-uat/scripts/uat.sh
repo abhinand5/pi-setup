@@ -23,8 +23,12 @@ MCP_JSON="$PI_HOME/mcp.json"
 BASE_CONFIG="$PI_HOME/playwright-mcp.json"
 ARTIFACTS="${UAT_ARTIFACTS:-${TMPDIR:-/tmp}/browser-uat}"
 SCREEN="${UAT_SCREEN:-1920x1080x24}"
-# Saved logins: one storage state per profile, never committed (see .gitignore).
-AUTH_DIR="$SKILL_DIR/.auth"
+# Saved logins: one storage state per profile. Deliberately OUTSIDE skills/: a
+# restore wipes $PI_HOME/skills and a sync copies the tree into the repo, so a
+# state file living there would be deleted on restore and copied into a checkout.
+AUTH_DIR="${UAT_AUTH_DIR:-$PI_HOME/uat-auth}"
+# The profile the MCP wrapper loads on start: `login` points it at the last one.
+CURRENT_STATE="$AUTH_DIR/current.json"
 
 if [[ -t 1 ]]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_BAD=$'\033[31m'; C_OFF=$'\033[0m'
@@ -470,7 +474,7 @@ cmd_artifacts() {
 # resulting storage state is what the MCP server loads on the next start.
 cmd_login() {
   local profile="default" env_file="" url="" phone_var="ADMIN_PHONE_NUMBER" code_var="ADMIN_PHONE_CODE" \
-        phone_field="" code_field="" send_selector="" submit_selector="" success_frag="" state="" dry=0
+        phone_field="" code_field="" send_selector="" submit_selector="" success_frag="" state="" timeout="" dry=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --profile) profile="${2:?--profile needs a name}"; shift 2 ;;
@@ -484,6 +488,7 @@ cmd_login() {
       --submit-selector) submit_selector="${2:?--submit-selector needs a selector}"; shift 2 ;;
       --success) success_frag="${2:?--success needs a URL fragment}"; shift 2 ;;
       --state) state="${2:?--state needs a path}"; shift 2 ;;
+      --timeout) timeout="${2:?--timeout needs milliseconds}"; shift 2 ;;
       --dry-run) dry=1; shift ;;
       -h|--help)
         cat <<'EOF'
@@ -501,9 +506,12 @@ uat.sh login — log in on the server side and save the browser state
   --submit-selector SEL   default button[type=submit]
   --success FRAGMENT      URL fragment meaning "logged in", default /admin
   --state PATH            write the state here instead of the profile path
+  --timeout MS            per-step timeout, default 20000 (env UAT_LOGIN_TIMEOUT)
   --dry-run               check everything, do not touch the browser
 
-  State goes to skills/browser-uat/.auth/<profile>.json (mode 600, gitignored).
+  State goes to $PI_HOME/uat-auth/<profile>.json (mode 600, outside skills/ so a
+  restore does not delete it). The last login also becomes current.json — that is
+  the file the MCP wrapper loads; UAT_STORAGE_STATE overrides it.
   After a successful login restart the MCP server so the wrapper passes the file.
 EOF
         return 0 ;;
@@ -519,9 +527,12 @@ EOF
   [[ -f "$env_file" ]] || die "login: no credentials file at $env_file — pass --env or set UAT_LOGIN_ENV"
   command -v node >/dev/null 2>&1 || die "login: node not found in PATH"
 
+  # `|| true`: with set -o pipefail a missing variable makes grep fail the whole
+  # pipeline, and the assignment would abort the script before the message below.
+  # `tr -d '\r'`: a .env edited on Windows would otherwise leave a CR in the value.
   local phone code
-  phone="$(grep -E "^${phone_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
-  code="$(grep -E "^${code_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  phone="$(grep -E "^${phone_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'" || true)"
+  code="$(grep -E "^${code_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'" || true)"
   [[ -n "$phone" ]] || die "login: $phone_var is empty or missing in $env_file"
   [[ -n "$code" ]] || die "login: $code_var is empty or missing in $env_file"
 
@@ -542,9 +553,14 @@ EOF
   UAT_LOGIN_SEND_SELECTOR="$send_selector" \
   UAT_LOGIN_SUBMIT_SELECTOR="$submit_selector" \
   UAT_LOGIN_SUCCESS="$success_frag" \
+  UAT_LOGIN_TIMEOUT="$timeout" \
   UAT_PLAYWRIGHT_ROOT="${UAT_PLAYWRIGHT_ROOT:-}" \
     node "$SCRIPT_DIR/uat-login.mjs"
 
+  # The wrapper loads current.json, so any profile works without extra env.
+  mkdir -p "$AUTH_DIR" && chmod 700 "$AUTH_DIR"
+  cp "$state" "$CURRENT_STATE" && chmod 600 "$CURRENT_STATE"
+  printf 'login: profile %s is now the current one (%s)\n' "$profile" "$CURRENT_STATE"
   printf 'login: done — restart the MCP server (/reload in pi) to use the saved session\n'
 }
 

@@ -87,7 +87,8 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - `playwright-mcp.json` — base Playwright MCP config the Xvfb wrapper derives from (see [Browser automation](#browser-automation-playwright-mcp))
   - `models.example.json` — the OpenRouter vendor pin; `--copy-config` merges it into `models.json` instead of replacing it
   - `pi-pstack-adapter.example.json` — every pstack role and panel pinned to an id the provider serves; `--restore` copies it only when `~/.pi/agent/pi-pstack-adapter.json` is absent, `--restore --copy-config` overwrites
-  - `AGENTS.md` — the delegation model policy: the 14 ids the OpenRouter workspace guardrail serves, with prices and assigned roles; the blocked list (`deepseek-v4-pro`, `google/*`/`gemini-*`, `openai/*`/`gpt-*`, all `routerai/*`); no Cursor model slugs; `pstack:<role>` instead of a model (see [pstack skills](#pstack-skills-pi-pstack-adapter))
+  - `AGENTS.md` — the delegation model policy: the blocked list (`deepseek-v4-pro`, `google/*`/`gemini-*`, `openai/*`/`gpt-*`, all `routerai/*`), the enforcement gate, the delegation rules, and the pointer to the allowed table; no Cursor model slugs; `pstack:<role>` instead of a model (see [pstack skills](#pstack-skills-pi-pstack-adapter))
+  - `delegation-models.md` — the 14 ids the OpenRouter workspace guardrail serves, with prices, the cache-read ranking and assigned roles; restored to `~/.pi/agent/docs/delegation-models.md`, read before delegating
 
 ## Set up from GitHub on a machine
 

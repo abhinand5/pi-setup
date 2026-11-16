@@ -30,8 +30,8 @@
 // Nothing secret is printed: no phone, no code, no cookies.
 
 import { execSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -46,6 +46,14 @@ const codeField = env.UAT_LOGIN_CODE_FIELD || '[name="LoginForm[code]"]';
 const sendSelector = env.UAT_LOGIN_SEND_SELECTOR || '';
 const submitSelector = env.UAT_LOGIN_SUBMIT_SELECTOR || 'button[type=submit]';
 const success = env.UAT_LOGIN_SUCCESS || '/admin';
+
+// "Under --success" is not enough on its own: with the default /admin the login
+// page itself is /admin/login/index, so a rejected code would look like a
+// successful login. The predicate therefore also excludes the login area.
+function loggedIn(current) {
+  const path = current.pathname;
+  return path.startsWith(success) && !path.includes('/login');
+}
 const timeout = Number(env.UAT_LOGIN_TIMEOUT || 20000);
 
 function usage(message) {
@@ -120,32 +128,48 @@ try {
   await page.fill(codeField, code);
 
   console.log('uat-login: отправляю форму');
-  await Promise.all([
-    page.waitForURL((current) => !current.pathname.includes('/login'), { timeout: Math.max(timeout, 30000) })
-      .catch(() => null),
-    page.click(submitSelector),
-  ]);
+  // Success is "the URL now sits under --success", not "the URL is no longer the
+  // login page": a failed submit that lands anywhere else would otherwise count
+  // as a login, and a state file with zero cookies would be written silently.
+  await page.click(submitSelector);
+  const landedUnderSuccess = await page
+    .waitForURL(loggedIn, { timeout: Math.max(timeout, 30000) })
+    .then(() => true)
+    .catch(() => false);
 
-  const landed = new URL(page.url());
-  if (!landed.pathname.startsWith(success) && landed.pathname.includes('/login')) {
-    const title = await page.title().catch(() => '');
-    console.error(`uat-login: вход не прошёл — остался на ${landed.pathname} («${title}»)`);
-    console.error('uat-login: проверь значения в .env, срок действия кода и доступность стенда');
-    process.exit(1);
-  }
-
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const state = await context.storageState();
-  writeFileSync(stateFile, JSON.stringify(state, null, 2), { mode: 0o600 });
-  chmodSync(stateFile, 0o600);
-
   const cookies = state.cookies?.length ?? 0;
-  console.log(`uat-login: готово — вход выполнен, ${cookies} cookie сохранено в ${stateFile}`);
-  console.log('uat-login: перезапусти MCP-сервер (/reload в pi), чтобы он подхватил состояние входа');
+  const landed = new URL(page.url());
+
+  if (!landedUnderSuccess || cookies === 0) {
+    const title = await page.title().catch(() => '');
+    console.error(
+      `uat-login: вход не прошёл — страница ${landed.pathname} («${title}»), ожидался путь ${success} вне /login, cookie ${cookies}`
+    );
+    console.error('uat-login: проверь значения в .env, срок действия кода, селекторы формы и доступность стенда');
+    process.exitCode = 1;
+  } else {
+    // Write-then-rename: a /reload in the middle of the write must not read half
+    // a JSON file.
+    const dirExisted = existsSync(stateDir);
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    // Only tighten a directory we created: chmod on someone else's (e.g. /tmp)
+    // fails with EPERM and would fail a login that already succeeded.
+    if (!dirExisted) chmodSync(stateDir, 0o700);
+    const tmp = join(stateDir, `.${process.pid}.tmp`);
+    writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, stateFile);
+
+    console.log(`uat-login: готово — вход выполнен, ${cookies} cookie сохранено в ${stateFile}`);
+    console.log('uat-login: перезапусти MCP-сервер (/reload в pi), чтобы он подхватил состояние входа');
+  }
   await context.close();
 } catch (error) {
   console.error('uat-login: ' + String(error).split('\n')[0]);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
+  // close() runs even on the error path: a bare process.exit() here would leave
+  // a Chromium child behind.
   await browser.close();
 }

@@ -214,7 +214,10 @@ jq -e --slurpfile s /root/.pi/agent/settings.json "[.models[] | split(\" \")[] |
 # Rows of the allowed table: first cell is a provider-qualified id. The old
 # pattern expected "<price> / ..." in the second cell and matched nothing even
 # before the table moved out of AGENTS.md (#15647).
-test "$(grep -cE '^\| `[^`]+/[^`]+`' /root/.pi/agent/docs/delegation-models.md)" -eq 14
+# Quoting: this whole block is one `bash -lc '...'` string, so a literal single
+# quote has to leave and re-enter it as '\'' — otherwise the backticks run on
+# the HOST and the container gets a mangled pattern.
+test "$(grep -cE '\''^\| `[^`]+/[^`]+`'\'' /root/.pi/agent/docs/delegation-models.md)" -eq 14
 grep -qi "model cap" /root/.pi/agent/AGENTS.md
 grep -q "docs/delegation-models.md" /root/.pi/agent/AGENTS.md
 test -L /root/.local/bin/pi-models-check

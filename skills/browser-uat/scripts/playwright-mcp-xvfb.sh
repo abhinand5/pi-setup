@@ -16,7 +16,7 @@
 #   UAT_IDLE_TIMEOUT=MS   close an idle browser (default 900000 = 15 min)
 #   UAT_MCP_PKG=SPEC      server package (default @playwright/mcp@0.0.84)
 #   UAT_STORAGE_STATE=P   saved login from `uat.sh login` (default
-#                         $PI_HOME/skills/browser-uat/.auth/default.json);
+#                         $PI_HOME/uat-auth/current.json);
 #                         passed to the server as PLAYWRIGHT_MCP_STORAGE_STATE
 #   UAT_PLAYWRIGHT_CONFIG base config (default ~/.pi/agent/playwright-mcp.json)
 #
@@ -151,7 +151,9 @@ derive_config() {
 # server restart. The file is written by `uat.sh login`; UAT_STORAGE_STATE points
 # the server at another profile.
 if [[ -z "${PLAYWRIGHT_MCP_STORAGE_STATE:-}" ]]; then
-  STATE_FILE="${UAT_STORAGE_STATE:-$PI_HOME/skills/browser-uat/.auth/default.json}"
+  # current.json is the profile written by the last `uat.sh login`; it lives
+  # outside skills/ so a restore does not delete it.
+  STATE_FILE="${UAT_STORAGE_STATE:-$PI_HOME/uat-auth/current.json}"
   if [[ -f "$STATE_FILE" ]]; then
     export PLAYWRIGHT_MCP_STORAGE_STATE="$STATE_FILE"
     log "saved login: $STATE_FILE"
