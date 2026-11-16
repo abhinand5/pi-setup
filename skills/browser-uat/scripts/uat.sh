@@ -5,6 +5,7 @@
 # preconditions, the virtual display, MCP config, and artifact hygiene.
 #
 #   uat.sh doctor                 check every precondition, with fixes
+#   uat.sh login [options]        log in on the server side, save the state file
 #   uat.sh config install         point ~/.pi/agent/mcp.json at the Xvfb wrapper
 #   uat.sh config show            print the effective playwright config
 #   uat.sh display start|stop|status   standalone Xvfb for manual debugging
@@ -22,6 +23,12 @@ MCP_JSON="$PI_HOME/mcp.json"
 BASE_CONFIG="$PI_HOME/playwright-mcp.json"
 ARTIFACTS="${UAT_ARTIFACTS:-${TMPDIR:-/tmp}/browser-uat}"
 SCREEN="${UAT_SCREEN:-1920x1080x24}"
+# Saved logins: one storage state per profile. Deliberately OUTSIDE skills/: a
+# restore wipes $PI_HOME/skills and a sync copies the tree into the repo, so a
+# state file living there would be deleted on restore and copied into a checkout.
+AUTH_DIR="${UAT_AUTH_DIR:-$PI_HOME/uat-auth}"
+# The profile the MCP wrapper loads on start: `login` points it at the last one.
+CURRENT_STATE="$AUTH_DIR/current.json"
 
 if [[ -t 1 ]]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_BAD=$'\033[31m'; C_OFF=$'\033[0m'
@@ -462,6 +469,102 @@ cmd_artifacts() {
 }
 
 # ---------------------------------------------------------------------------
+# Server-side login: the credentials never enter the chat. Values come from the
+# project's .env, the form is filled by Playwright in a headless browser, and the
+# resulting storage state is what the MCP server loads on the next start.
+cmd_login() {
+  local profile="default" env_file="" url="" phone_var="ADMIN_PHONE_NUMBER" code_var="ADMIN_PHONE_CODE" \
+        phone_field="" code_field="" send_selector="" submit_selector="" success_frag="" state="" timeout="" dry=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --profile) profile="${2:?--profile needs a name}"; shift 2 ;;
+      --env) env_file="${2:?--env needs a path}"; shift 2 ;;
+      --url) url="${2:?--url needs a URL}"; shift 2 ;;
+      --phone-var) phone_var="${2:?--phone-var needs a variable name}"; shift 2 ;;
+      --code-var) code_var="${2:?--code-var needs a variable name}"; shift 2 ;;
+      --phone-field) phone_field="${2:?--phone-field needs a selector}"; shift 2 ;;
+      --code-field) code_field="${2:?--code-field needs a selector}"; shift 2 ;;
+      --send-selector) send_selector="${2:?--send-selector needs a selector}"; shift 2 ;;
+      --submit-selector) submit_selector="${2:?--submit-selector needs a selector}"; shift 2 ;;
+      --success) success_frag="${2:?--success needs a URL fragment}"; shift 2 ;;
+      --state) state="${2:?--state needs a path}"; shift 2 ;;
+      --timeout) timeout="${2:?--timeout needs milliseconds}"; shift 2 ;;
+      --dry-run) dry=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+
+uat.sh login — log in on the server side and save the browser state
+
+  --profile NAME          state file name, default "default"
+  --env FILE              file to read credentials from, default ./.env
+  --url URL               sign-in page (required, or UAT_LOGIN_URL)
+  --phone-var NAME        variable with the phone, default ADMIN_PHONE_NUMBER
+  --code-var NAME         variable with the one-time code, default ADMIN_PHONE_CODE
+  --phone-field SELECTOR  default [name="LoginForm[username]"]
+  --code-field SELECTOR   default [name="LoginForm[code]"]
+  --send-selector SEL     button that requests the code (form may need it first)
+  --submit-selector SEL   default button[type=submit]
+  --success FRAGMENT      URL fragment meaning "logged in", default /admin
+  --state PATH            write the state here instead of the profile path
+  --timeout MS            per-step timeout, default 20000 (env UAT_LOGIN_TIMEOUT)
+  --dry-run               check everything, do not touch the browser
+
+  State goes to $PI_HOME/uat-auth/<profile>.json (mode 600, outside skills/ so a
+  restore does not delete it). The last login also becomes current.json — that is
+  the file the MCP wrapper loads; UAT_STORAGE_STATE overrides it.
+  After a successful login restart the MCP server so the wrapper passes the file.
+EOF
+        return 0 ;;
+      *) die "login: unknown argument '$1' (see uat.sh login --help)" ;;
+    esac
+  done
+
+  [[ -n "$env_file" ]] || env_file="${UAT_LOGIN_ENV:-$PWD/.env}"
+  [[ -n "$url" ]] || url="${UAT_LOGIN_URL:-}"
+  [[ -n "$state" ]] || state="$AUTH_DIR/${profile}.json"
+
+  [[ -n "$url" ]] || die "login: no sign-in URL — pass --url or set UAT_LOGIN_URL"
+  [[ -f "$env_file" ]] || die "login: no credentials file at $env_file — pass --env or set UAT_LOGIN_ENV"
+  command -v node >/dev/null 2>&1 || die "login: node not found in PATH"
+
+  # `|| true`: with set -o pipefail a missing variable makes grep fail the whole
+  # pipeline, and the assignment would abort the script before the message below.
+  # `tr -d '\r'`: a .env edited on Windows would otherwise leave a CR in the value.
+  local phone code
+  phone="$(grep -E "^${phone_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'" || true)"
+  code="$(grep -E "^${code_var}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'" || true)"
+  [[ -n "$phone" ]] || die "login: $phone_var is empty or missing in $env_file"
+  [[ -n "$code" ]] || die "login: $code_var is empty or missing in $env_file"
+
+  printf 'login: profile %s, credentials %s/%s from %s\n' "$profile" "$phone_var" "$code_var" "$env_file"
+  printf 'login: state will be written to %s\n' "$state"
+  if [[ "$dry" -eq 1 ]]; then
+    printf 'login: dry run — browser not started\n'
+    return 0
+  fi
+
+  # Values travel through the environment: argv is visible in `ps` to other users.
+  UAT_LOGIN_URL="$url" \
+  UAT_LOGIN_PHONE="$phone" \
+  UAT_LOGIN_CODE="$code" \
+  UAT_LOGIN_STATE="$state" \
+  UAT_LOGIN_PHONE_FIELD="$phone_field" \
+  UAT_LOGIN_CODE_FIELD="$code_field" \
+  UAT_LOGIN_SEND_SELECTOR="$send_selector" \
+  UAT_LOGIN_SUBMIT_SELECTOR="$submit_selector" \
+  UAT_LOGIN_SUCCESS="$success_frag" \
+  UAT_LOGIN_TIMEOUT="$timeout" \
+  UAT_PLAYWRIGHT_ROOT="${UAT_PLAYWRIGHT_ROOT:-}" \
+    node "$SCRIPT_DIR/uat-login.mjs"
+
+  # The wrapper loads current.json, so any profile works without extra env.
+  mkdir -p "$AUTH_DIR" && chmod 700 "$AUTH_DIR"
+  cp "$state" "$CURRENT_STATE" && chmod 600 "$CURRENT_STATE"
+  printf 'login: profile %s is now the current one (%s)\n' "$profile" "$CURRENT_STATE"
+  printf 'login: done — restart the MCP server (/reload in pi) to use the saved session\n'
+}
+
+# ---------------------------------------------------------------------------
 cmd_report() {
   cat <<'EOF'
 # UAT report — <feature / branch>
@@ -500,6 +603,7 @@ usage() {
 uat.sh — environment management for browser UAT (Playwright MCP)
 
   doctor                     check preconditions; prints fixes
+  login [options]            log in on the server side, save the state file
   config show                print the effective playwright config
   config install [--dry-run] point ~/.pi/agent/mcp.json at the Xvfb wrapper
   display start|stop|status  standalone Xvfb for manual debugging
@@ -513,6 +617,7 @@ EOF
 
 case "${1:-help}" in
   doctor) shift; cmd_doctor "$@" ;;
+  login) shift; cmd_login "$@" ;;
   config) shift; cmd_config "$@" ;;
   display) shift; cmd_display "$@" ;;
   artifacts) shift; cmd_artifacts "$@" ;;

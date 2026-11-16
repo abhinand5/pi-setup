@@ -433,10 +433,15 @@ print("models ok: example updated from live overrides: " + ", ".join(sorted(adde
 PY
 }
 
-# The allow list, the pstack role pinning and the AGENTS.md table are three
-# copies of one fact: which model ids the provider actually serves. A restore
-# from a stale copy is what loses a delegation run, so refuse to sync when they
-# disagree.
+# The allow list, the pstack role pinning and the delegation-models table are
+# three copies of one fact: which model ids the provider actually serves. A
+# restore from a stale copy is what loses a delegation run, so refuse to sync
+# when they disagree.
+#
+# The table lives in config/delegation-models.md, not in config/AGENTS.md: the
+# AGENTS.md text is loaded into every session, and a table needed only when a
+# model id has to be chosen does not belong there (#15647). AGENTS.md keeps a
+# pointer to the doc, and the pointer is part of the contract below.
 validate_models() {
   python3 - <<'PY' "$ROOT"
 import json
@@ -448,6 +453,7 @@ root = Path(sys.argv[1])
 settings_path = root / "config" / "settings.example.json"
 adapter_path = root / "config" / "pi-pstack-adapter.example.json"
 agents_path = root / "config" / "AGENTS.md"
+models_path = root / "config" / "delegation-models.md"
 errors = []
 
 def normalize(model_id):
@@ -487,13 +493,26 @@ if adapter_path.is_file():
 
 # config/AGENTS.md is a required repo artifact, not an optional one: sync.sh
 # overwrites it wholesale from the live file, so a live AGENTS.md that lost its
-# table would otherwise commit cleanly and the next restore would ship a
-# policy-less policy file.
+# pointer would otherwise commit cleanly and the next restore would ship a file
+# that points nowhere.
 if not agents_path.is_file():
     errors.append("config/AGENTS.md is missing; the delegation policy must be versioned here")
 else:
+    agents_text = agents_path.read_text()
+    if "docs/delegation-models.md" not in agents_text:
+        errors.append(
+            "config/AGENTS.md carries no pointer to docs/delegation-models.md; "
+            "the policy must say where the allowed table lives"
+        )
+
+# The allowed table itself lives in its own document (#15647). It is checked the
+# same way it used to be checked inside AGENTS.md: the provider-qualified ids must
+# equal modelScope.allow exactly.
+if not models_path.is_file():
+    errors.append("config/delegation-models.md is missing; the allowed table must be versioned here")
+else:
     table = set()
-    for line in agents_path.read_text().splitlines():
+    for line in models_path.read_text().splitlines():
         match = re.match(r"^\|\s*`([^`]+)`\s*\|", line)
         if match and "/" in match.group(1):
             # Only the provider-qualified rows belong to the allowed table. Other
@@ -502,16 +521,16 @@ else:
             # modelScope.allow that carries provider prefixes.
             table.add(normalize(match.group(1)))
     if not table:
-        errors.append("config/AGENTS.md carries no `| `id` |` rows; the allowed table is required")
+        errors.append("config/delegation-models.md carries no `| `id` |` rows; the allowed table is required")
     elif table != allow_norm:
         only_table = sorted(table - allow_norm)
         only_allow = sorted(allow_norm - table)
         errors.append(
-            "config/AGENTS.md allowed table and modelScope.allow disagree; "
-            f"only in AGENTS.md: {only_table}, only in modelScope: {only_allow}"
+            "config/delegation-models.md allowed table and modelScope.allow disagree; "
+            f"only in delegation-models.md: {only_table}, only in modelScope: {only_allow}"
         )
     else:
-        print(f"models ok: config/AGENTS.md table matches modelScope.allow ({len(table)} ids)")
+        print(f"models ok: config/delegation-models.md table matches modelScope.allow ({len(table)} ids)")
 
 if errors:
     print("\n".join(f"models error: {e}" for e in errors), file=sys.stderr)
@@ -575,7 +594,7 @@ cd "$ROOT"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/pi-pstack-adapter.example.json"
+  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/pi-pstack-adapter.example.json"
   exit 0
 fi
 
@@ -596,6 +615,9 @@ if [[ -f "$PI_HOME/micme.json" ]]; then
 fi
 if [[ -f "$PI_HOME/AGENTS.md" ]]; then
   cp "$PI_HOME/AGENTS.md" "$ROOT/config/AGENTS.md"
+fi
+if [[ -f "$PI_HOME/docs/delegation-models.md" ]]; then
+  cp "$PI_HOME/docs/delegation-models.md" "$ROOT/config/delegation-models.md"
 fi
 
 validate_json "$ROOT/package.json" "$ROOT/config/settings.example.json"

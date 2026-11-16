@@ -4,6 +4,10 @@ auth.json
 *.pem
 .env
 .env.*
+# Saved browser logins (uat.sh login) live in ~/.pi/agent/uat-auth, outside the
+# repo on purpose; this line is a belt-and-braces guard for a redirected
+# UAT_AUTH_DIR.
+**/uat-auth/
 
 # Pi runtime state
 sessions/

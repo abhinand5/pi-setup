@@ -118,7 +118,7 @@ Four layers, each doing one job:
 | --- | --- | --- |
 | gate | `~/.pi/agent/settings.json` → `subagents.modelScope` (`enforce: true`, `strict: true`, 14 ids in `allow`, narrower per-agent lists for `reviewer`/`oracle`/`evidence-auditor`) | rejects any delegation naming an id outside the cap before the child starts, including the parent-model inheritance path |
 | roles | `~/.pi/agent/pi-pstack-adapter.json` (versioned here as `config/pi-pstack-adapter.example.json`) | pins all 12 pstack roles and panels to capped ids, so `pstack:<role>` never resolves to `inherit` |
-| policy | `config/AGENTS.md` | the human- and model-readable table of the 14 ids, prices, roles, and the explicit block list |
+| policy | `config/AGENTS.md` + `config/delegation-models.md` | the policy text with the explicit block list, and the table of the 14 ids, prices and roles it points at (restored as `~/.pi/agent/docs/delegation-models.md`) |
 | probe | `bin/pi-models-check` | POSTs `max_tokens: 1` to every id in `modelScope.allow` and reports 200/404, so "verified on …" is regenerable instead of folklore |
 
 `pi-setup-sync` refuses to sync when those disagree: every id in the adapter example and in

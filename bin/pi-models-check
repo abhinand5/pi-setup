@@ -231,7 +231,8 @@ else
     printf 'failed ids:\n'
     printf '  %s\n' "${failed_ids[@]}"
     printf 'A 404 here is the provider cap, not a local config problem: remove the id from\n'
-    printf 'subagents.modelScope.allow and from the table in config/AGENTS.md, or have the\n'
+    printf 'subagents.modelScope.allow and from the table in config/delegation-models.md,\n'
+    printf 'or have the\n'
     printf 'workspace guardrail widened. Do not retry the id.\n'
   fi
 fi

@@ -280,6 +280,17 @@ make_backup() {
       touch "$BACKUP_DIR/.absent-$name"
     fi
   done
+  # Policy files that --restore may overwrite: AGENTS.md and the allowed-model
+  # table it points at. The table is overwritten unconditionally (a stale table
+  # loses delegation runs), so a local edit has to be revertible (#15647).
+  for name in AGENTS.md docs/delegation-models.md; do
+    if [[ -f "$PI_HOME/$name" ]]; then
+      mkdir -p "$BACKUP_DIR/$(dirname "$name")"
+      cp "$PI_HOME/$name" "$BACKUP_DIR/$name"
+    else
+      touch "$BACKUP_DIR/.absent-$(basename "$name")"
+    fi
+  done
 
   cat >"$BACKUP_DIR/MANIFEST.txt" <<EOF
 pi-setup backup
@@ -309,10 +320,10 @@ revert_backup() {
       echo "Backup has no $name/ state; leaving $PI_HOME/$name unchanged."
     fi
   done
-  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json; do
+  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json AGENTS.md docs/delegation-models.md; do
     if [[ -f "$backup/$name" ]]; then
       copy_path "$backup/$name" "$PI_HOME/$name"
-    elif [[ -f "$backup/.absent-$name" ]]; then
+    elif [[ -f "$backup/.absent-$(basename "$name")" ]]; then
       echo "Removing $PI_HOME/$name because it was absent when the backup was created."
       run rm -f "$PI_HOME/$name"
     else
@@ -514,6 +525,20 @@ if [[ "$RESTORE" == "1" ]]; then
   copy_dir_contents "$ROOT/themes" "$PI_HOME/themes"
   copy_dir_contents "$ROOT/skills" "$PI_HOME/skills"
   install_config_if_absent "$ROOT/config/AGENTS.md" "$PI_HOME/AGENTS.md" "AGENTS.md"
+  # The allowed-model table AGENTS.md points at. Policy, not machine-local
+  # config, so restore overwrites it: a stale table is what loses a delegation
+  # run. make_backup keeps a copy of the previous one, so --revert brings a local
+  # edit back (#15647).
+  if [[ -f "$ROOT/config/delegation-models.md" ]]; then
+    copy_path "$ROOT/config/delegation-models.md" "$PI_HOME/docs/delegation-models.md"
+  else
+    echo "warning: $ROOT/config/delegation-models.md is missing — the allowed-model table was not restored"
+  fi
+  # The table is useless if nothing points at it: AGENTS.md is restored only when
+  # absent, so an older live copy may have no pointer.
+  if [[ -f "$PI_HOME/AGENTS.md" ]] && ! grep -q "docs/delegation-models.md" "$PI_HOME/AGENTS.md"; then
+    echo "warning: $PI_HOME/AGENTS.md does not point to docs/delegation-models.md — the restored table will not be read (run --restore --copy-config to take the repo copy)"
+  fi
   install_config_if_absent "$ROOT/config/pi-pstack-adapter.example.json" "$PI_HOME/pi-pstack-adapter.json" "pi-pstack-adapter.json"
   if compgen -G "$ROOT/skills/browser-uat/scripts/*.sh" >/dev/null; then
     run chmod +x "$PI_HOME/skills/browser-uat/scripts/"*.sh

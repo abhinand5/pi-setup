@@ -28,6 +28,42 @@ If `mcp__playwright__*` tools are absent, the server is not connected: run
 `pi mcp list`, then `/reload` (the tool list only refreshes on reload or a new
 session).
 
+## Logging in (server-side)
+
+The browser tools take field values only as arguments — that is, into the
+conversation. Test credentials must not go there, so the login is done out of
+band, by a script, and the agent only opens the already-authenticated session:
+
+```bash
+~/.pi/agent/skills/browser-uat/scripts/uat.sh login \
+  --url http://localhost/admin/login/sign-in \
+  --env ~/work/project/.env \
+  --send-selector .js_send_code \
+  --profile my-project
+```
+
+What it does: reads the phone and the one-time code from the project `.env`
+(variables `ADMIN_PHONE_NUMBER` / `ADMIN_PHONE_CODE` by default, override with
+`--phone-var` / `--code-var`), fills the sign-in form in a headless Chromium, and
+writes the browser state to `~/.pi/agent/uat-auth/<profile>.json` (mode 600) and
+points `~/.pi/agent/uat-auth/current.json` at it — that is the file the server
+loads, so any `--profile` works without extra environment. The directory lives
+outside `skills/` on purpose: a restore wipes `skills/` and a sync copies that
+tree into the repo checkout. The values travel through the environment, never
+argv — argv is visible in `ps`.
+
+After that the MCP server picks the state up on its next start: the Xvfb wrapper
+exports `PLAYWRIGHT_MCP_STORAGE_STATE` when the file exists, and `--isolated`
+still keeps the profile in memory. So run `/reload` once after the login, then
+navigate to any page — you are already logged in. `--profile` picks the file,
+`UAT_STORAGE_STATE` points the server at another one; `--dry-run` checks the
+paths without starting a browser. The login runs Playwright's own Chromium, not
+the system Chrome that `uat.sh doctor` looks for — if it is missing, the script
+says so and `npx playwright install chromium` fixes it.
+
+Project-specific details (form selectors, where the dev one-time code comes
+from) belong to the project skill — this section owns only the mechanism.
+
 ## Workflow
 
 1. **Write the QA inventory before touching the browser.** From the user's
@@ -125,8 +161,12 @@ and report the duplication.
   explicit filename resolves against the session cwd and litters the repo.
 - **The display is 1920×1080**, so full-page screenshots are wide. Call
   `browser_resize` (e.g. 1280×800) when iterating, or take element screenshots.
-- **`--isolated` means no persisted login.** Every server restart starts logged
-  out. For login-heavy UAT, log in as part of the flow.
+- **`--isolated` means no persisted profile, not "no login".** Every server
+  restart starts with a fresh in-memory profile, and the saved storage state from
+  `uat.sh login` is loaded into it — so the session survives a restart without
+  typing credentials into the chat. Without a saved state the browser starts
+  logged out; do not log in "as part of the flow" with `browser_type` (the values
+  would land in the conversation) — run `uat.sh login` first.
 - **The browser self-closes after 15 minutes idle.** The next tool call relaunches
   it, which loses tabs and session state — re-navigate rather than assuming the
   page is still there.
