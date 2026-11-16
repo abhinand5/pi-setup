@@ -10,7 +10,15 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 1. Call the Skill tool with `writing-for-agents` for the writing style guide.
 
-2. Read the primary sources for the session the user specifies. This may mean searching through session logs on this machine. If the user doesn't specify a session, default to the current one.
+2. Read the primary sources for the session the user specifies. If the user doesn't specify a session, default to the current one (it is already in context).
+
+   Session logs live in `~/.pi/agent/sessions/<project-slug>/<timestamp>_<uuid>.jsonl` (one JSONL file per session; subagent artifacts in `…/subagent-artifacts/`). Find a past session by project and time, then read it page by page — never in one call:
+
+   ```bash
+   ls -t ~/.pi/agent/sessions/*/  | head        # newest sessions across projects
+   rg -l '15620' ~/.pi/agent/sessions/<slug>/   # which session mentions the task
+   rg -c '' ~/.pi/agent/sessions/<slug>/<file>.jsonl   # size in lines before reading
+   ```
 
 3. Look for candidates for improvement in these categories.
 
@@ -22,7 +30,18 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 - **No-ops**: look for instructions in steering files that don't modify the agent's behavior. _Use when_ the steering files are large and unwieldy.
 - **Information access**: look for opportunities to increase the agent's access to information. Teeing dev server logs, readonly access to third-party services. _Use when_ a crucial piece of information was not available to the agent.
 
-4. Present these candidates to the user, in order of severity.
+4. Before presenting, check what is already filed and already landed — a candidate that repeats closed work is worse than no candidate:
+
+   ```bash
+   make epic-status        # last merges into the epic, open PRs, epic children with statuses (msb-lk)
+   redmine issues list --parent <epic-id> --status '*' -o json | jq -r '.[] | "\(.id) \(.status.name) \(.subject)"'
+   ```
+
+   Mark each candidate the same way: `already closed in #NNNNN`, `already landed in <merge sha>`, or `new`.
+
+5. Present these candidates to the user, in order of severity.
+
+6. After the presentation, offer to file the findings as a child issue of the current epic (the epic the work belongs to, not the task): one issue for the whole list, numbered findings inside, with a note that items may overlap already-merged slices. Do not create it without the user's word; when they say yes, pass the description from a file — `redmine-file issues create --project … --parent <epic> --description-file /tmp/retro.txt` — so the text never rides in the conversation.
 
 ## Reference
 

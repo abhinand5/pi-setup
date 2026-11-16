@@ -495,7 +495,11 @@ else:
     table = set()
     for line in agents_path.read_text().splitlines():
         match = re.match(r"^\|\s*`([^`]+)`\s*\|", line)
-        if match:
+        if match and "/" in match.group(1):
+            # Only the provider-qualified rows belong to the allowed table. Other
+            # tables in the same file (the cache-read price ranking) quote bare
+            # model ids, and counting those made the comparison fail against a
+            # modelScope.allow that carries provider prefixes.
             table.add(normalize(match.group(1)))
     if not table:
         errors.append("config/AGENTS.md carries no `| `id` |` rows; the allowed table is required")

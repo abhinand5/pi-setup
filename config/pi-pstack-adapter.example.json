@@ -4,13 +4,13 @@
     "refactoring": "openrouter/z-ai/glm-5.3-flash:medium",
     "bug-fix": "openrouter/z-ai/glm-5.3-flash:medium",
     "perf-issue": "openrouter/z-ai/glm-5.3-flash:medium",
-    "hillclimb": "openrouter/z-ai/glm-5.3:high",
+    "hillclimb": "openrouter/z-ai/glm-5.3-flash:medium",
     "judgment": "openrouter/z-ai/glm-5.3:high",
     "strongest-judgment": "openrouter/z-ai/glm-5.3:xhigh",
     "general": "openrouter/z-ai/glm-5.3-flash:medium",
-    "arena-runners": "openrouter/z-ai/glm-5.3:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
-    "arena-cross-judge-pool": "openrouter/deepseek/deepseek-v4.1-flash-1017:high openrouter/minimax/minimax-m3:high",
-    "architect-runners": "openrouter/z-ai/glm-5.3:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
-    "interrogate-reviewers": "openrouter/z-ai/glm-5.3:high openrouter/deepseek/deepseek-v4.1-flash-1017:high"
+    "arena-runners": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
+    "arena-cross-judge-pool": "openrouter/z-ai/glm-5.3:high openrouter/minimax/minimax-m3:high",
+    "architect-runners": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
+    "interrogate-reviewers": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high"
   }
 }

@@ -87,6 +87,17 @@ bash /tmp/redmine-install.sh
 
 Сервер Redmine (`redmine.msb-leasing.ru`) рендерит `description` и `notes` через **Textile (RedCloth)**. API `GET/PUT /issues/<id>.json` может быть **200/204**, а `GET /issues/<id>` (HTML) — **500 Internal error**. Уже ловили многократно (#13954 и раньше).
 
+### Длинный текст — из файла, не строкой
+
+`--description` и `--note` принимают только строку, поэтому описание на 5–10 КБ целиком уезжает в переписку агента. Обёртка `redmine-file` (в `PATH`, `~/.local/bin/redmine-file`) читает текст из файла сама:
+
+```bash
+redmine-file issues create --project "МСБ-лизинг" --parent 15598 --subject "…" --description-file /tmp/desc.txt
+redmine-file issues update 15647 --status "Ожидает тестирование" --note-file /tmp/note.txt
+```
+
+Пиши текст в файл, в вызов передавай только путь. Остальные аргументы проходят в `redmine` без изменений.
+
 ### Перед create / update description или comment
 
 1. Пиши **Textile**, не Markdown.

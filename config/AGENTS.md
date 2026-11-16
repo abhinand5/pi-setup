@@ -7,25 +7,49 @@ picks anything else loses the run with `404 ... 0 endpoints out of 14 ... guardr
 
 ## Allowed
 
-Only these ids, all on `openrouter/`. Verified live on 2026-11-15; the cap is provider-side, so a
-model in the local catalog is not evidence it works.
+Only these ids, all on `openrouter/`. Prices below are the OpenRouter list, read from
+`GET https://openrouter.ai/api/v1/models` on 2026-11-16; the cap is provider-side, so a model in
+the local catalog is not evidence it works.
 
-| id | in / out $ per Mtok | role |
+| id | in | **cache read** | out | role |
+| --- | --- | --- | --- | --- |
+| `deepseek/deepseek-v4.1-flash-1017` | 0.30 | **0.006 (2%)** | 1.20 | default for `reviewer` / `oracle` / `evidence-auditor`; bulk code, long tool loops, panel seats |
+| `deepseek/deepseek-v4.1-flash` | 0.14 | **0.0042 (3%)** | 0.42 | same model, unversioned |
+| `deepseek/deepseek-v4-flash-vision-exp` | 0.44 | 0.014 (3%) | 1.32 | vision experiments |
+| `z-ai/glm-5.3` | 0.0699 | **0.0689 (99%)** | 1.40 | `judgment`, `strongest-judgment`, one arena cross-judge seat |
+| `z-ai/glm-5.3-flash` | 0.0399 | 0.030 (75%) | 0.0784 | default bulk model: every agent and pstack runner role |
+| `z-ai/glm-5.2` | 0.0070 | 0.0060 (86%) | 6.80 | allowed, not assigned; most expensive output in the cap |
+| `z-ai/glm-5.1` | 1.40 | 0.26 (19%) | 4.40 | allowed, not assigned |
+| `z-ai/glm-5` | 1.00 | 0.20 (20%) | 3.20 | allowed, not assigned |
+| `z-ai/glm-4.7-flash` | 0.0605 | 0 | 0.40 | allowed, not assigned |
+| `minimax/minimax-m3` | 0.30 | 0.060 (20%) | 1.20 | third family, arena cross-judge seat only |
+| `minimax/minimax-m3.1-flash` | 0.15 | 0.015 (10%) | 0.60 | allowed, not assigned |
+| `inclusionai/ling-3.1-flash` | 0.045 | 0.0090 (20%) | 0.135 | allowed, not assigned |
+| `inclusionai/ling-3.0-flash` | 0.021 | 0.0042 (20%) | 0.063 | allowed, not assigned |
+| `inclusionai/ling-3.0-flash-vl` | 0.060 | 0.012 (20%) | 0.18 | vision fallback |
+
+### Rank by cache read, not by input
+
+An agent loop re-sends its whole context every turn: measured over 2026-11-11..16, **97-99% of all
+prompt tokens were cache reads**, and prompt cost was 64-83% of the bill. So the price that decides
+the bill is the cache-read column, not the headline input price.
+
+| | $/Mtok prompt tokens actually billed | $ per call |
 | --- | --- | --- |
-| `deepseek/deepseek-v4.1-flash-1017` | 0.006 / 0.50 | bulk code, cross-check reviewer |
-| `deepseek/deepseek-v4.1-flash` | 0.006 / 0.50 | same model, unversioned |
-| `deepseek/deepseek-v4-flash-vision-exp` | 0.216 / 0.647 | vision experiments |
-| `z-ai/glm-5.3` | 0.070 / 1.40 | judgment, strongest-judgment, primary reviewer |
-| `z-ai/glm-5.3-flash` | 0.029 / 0.092 | default bulk model for every subagent |
-| `z-ai/glm-5.2` | 0.006 / 6.80 | allowed, but the most expensive output in the cap |
-| `z-ai/glm-5.1` | 0.899 / 2.82 | allowed, not assigned |
-| `z-ai/glm-5` | 0.60 / 1.92 | allowed, not assigned |
-| `z-ai/glm-4.7-flash` | 0.061 / 0.40 | allowed, not assigned |
-| `minimax/minimax-m3` | 0.23 / 0.96 | third family for arena cross-judging |
-| `minimax/minimax-m3.1-flash` | 0.05 / 0.20 | allowed, not assigned |
-| `inclusionai/ling-3.1-flash` | 0.075 / 0.225 | allowed, not assigned |
-| `inclusionai/ling-3.0-flash` | 0.021 / 0.063 | allowed, not assigned |
-| `inclusionai/ling-3.0-flash-vl` | 0.06 / 0.18 | vision fallback |
+| `deepseek-v4.1-flash-1017` | 0.0056 | 0.00078 |
+| `glm-5.3` | 0.1163 | 0.00664 |
+
+`glm-5.3` bills cache reads at 99% of its input price, so caching buys nothing there; deepseek
+bills them at 2%, a 50x discount. Same workload, **21x** the prompt cost. Consequence: put the
+model with a real cache discount on every high-frequency, long-context role, and spend a model
+with no cache discount only on single-shot decisions.
+
+Corollary: `z-ai/glm-5.2` (cache 86%, output 6.80) and `minimax/minimax-m3` (cache 20%, output
+1.20) are as expensive per call as `glm-5.3` despite cheaper inputs. Do not use them as "the cheap
+option" and do not put them in bulk seats.
+
+Provider routing matters too: `deepseek-v4.1-flash-1017` on InferenceNet cost 5x what the same
+model cost on DeepInfra ($0.0040 vs $0.00077 per call). Pin `DeepInfra` when the volume is large.
 
 ## Blocked
 
@@ -52,10 +76,14 @@ One hard gate, in user config; do not weaken it without the user asking.
   explicit `agentOverrides.<name>.model`, so a call that names no model lands on a capped model
   instead of the parent's. `inherit` passes only while the parent session model is itself inside
   the cap, which is the intended behaviour, not an exemption.
-- `reviewer`, `oracle`, and `evidence-auditor` additionally carry a per-agent allow list capped at
-  `glm-5.3` and `deepseek-v4.1-flash-1017`, so a review cannot escalate to `glm-5.2`.
+- `reviewer`, `oracle`, and `evidence-auditor` all default to `deepseek-v4.1-flash-1017` at
+  thinking `medium`, and additionally carry a per-agent allow list of `glm-5.3-flash`,
+  `deepseek-v4.1-flash-1017`, and `glm-5.3`, so a review cannot escalate to `glm-5.2`; naming
+  `glm-5.3` explicitly is still allowed for a review that has to be argued at full strength.
 - `~/.pi/agent/pi-pstack-adapter.json` pins every pstack role and panel to a capped model (see the
-  `Model roles` table of `pstack_adapter status`). It carries no `modelFilter`: that filter also
+  `Model roles` table of `pstack_adapter status`). `glm-5.3` is assigned only to `judgment`,
+  `strongest-judgment`, and one seat of `arena-cross-judge-pool`; every runner, reviewer, and
+  `hillclimb` role runs `glm-5.3-flash`. The file carries no `modelFilter`: that filter also
   blocked every delegation that named no model, which broke `code-review` and any skill that lets
   a child inherit, so it was removed on purpose. `modelScope` is the gate.
 - The table above is a dated observation, not a standing fact. Re-verify it with `pi-models-check`
@@ -73,6 +101,14 @@ One hard gate, in user config; do not weaken it without the user asking.
 - An ad-hoc fan-out that wants model diversity picks from the allowed list only. Do not reach into
   a provider catalog for a "different family". The families available here are `glm`, `deepseek`,
   `minimax`, and `ling`.
+- **One expensive seat per workflow, and it sits at the decision, not in the fan-out.** A panel
+  spends money per seat per run; the judge spends it once. Keep `glm-5.3` on the judge and run the
+  seats on `glm-5.3-flash` plus a second family. Adding a third runner seat to "keep diversity"
+  raises the bill — it never lowers it.
+- **A one-off fan-out can cost more than a week of normal work.** On 2026-11-13, 76 calls to
+  `claude-opus-5` / `claude-sonnet-5` / `gpt-5.6-sol` inside 16 minutes were $6.08 — 27% of the
+  week's $22.73, at $0.05-0.16 per call. Those ids are blocked now; the replacement for such a
+  comparison is `glm-5.3` + `minimax-m3`, not a search for a stronger family.
 - A model that answers `curl` may still be outside the cap; only the table above is policy.
 - When a delegation fails on its model, report the failure and name the model or role. Do not
   silently substitute another model.

@@ -84,19 +84,22 @@
       "agents": {
         "reviewer": {
           "allow": [
-            "openrouter/z-ai/glm-5.3",
-            "openrouter/deepseek/deepseek-v4.1-flash-1017"
+            "openrouter/z-ai/glm-5.3-flash",
+            "openrouter/deepseek/deepseek-v4.1-flash-1017",
+            "openrouter/z-ai/glm-5.3"
           ]
         },
         "oracle": {
           "allow": [
-            "openrouter/z-ai/glm-5.3",
-            "openrouter/deepseek/deepseek-v4.1-flash-1017"
+            "openrouter/z-ai/glm-5.3-flash",
+            "openrouter/deepseek/deepseek-v4.1-flash-1017",
+            "openrouter/z-ai/glm-5.3"
           ]
         },
         "evidence-auditor": {
           "allow": [
             "openrouter/deepseek/deepseek-v4.1-flash-1017",
+            "openrouter/z-ai/glm-5.3-flash",
             "openrouter/z-ai/glm-5.3"
           ]
         }
@@ -119,12 +122,12 @@
         "model": "openrouter/z-ai/glm-5.3-flash"
       },
       "reviewer": {
-        "model": "openrouter/z-ai/glm-5.3",
-        "thinking": "high"
+        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+        "thinking": "medium"
       },
       "oracle": {
-        "model": "openrouter/z-ai/glm-5.3",
-        "thinking": "high"
+        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+        "thinking": "medium"
       },
       "evidence-auditor": {
         "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
