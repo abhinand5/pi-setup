@@ -211,11 +211,15 @@ jq -e ".subagents.modelScope as \$s | [\$s.agents[] | .allow[]] - \$s.allow | le
 jq -e "[.subagents.agentOverrides | keys[]] | (index(\"reviewer\") != null and index(\"oracle\") != null and index(\"evidence-auditor\") != null and index(\"uat-browser\") != null)" /root/.pi/agent/settings.json >/dev/null
 test -f /root/.pi/agent/pi-pstack-adapter.json
 jq -e --slurpfile s /root/.pi/agent/settings.json "[.models[] | split(\" \")[] | split(\":\")[0]] | unique | map(. as \$m | \$s[0].subagents.modelScope.allow | index(\$m)) | all(. != null)" /root/.pi/agent/pi-pstack-adapter.json >/dev/null
-test "$(grep -cE "^\| [^|]+ \| [0-9.]+ / " /root/.pi/agent/AGENTS.md)" -eq 14
+# Rows of the allowed table: first cell is a provider-qualified id. The old
+# pattern expected "<price> / ..." in the second cell and matched nothing even
+# before the table moved out of AGENTS.md (#15647).
+test "$(grep -cE '^\| `[^`]+/[^`]+`' /root/.pi/agent/docs/delegation-models.md)" -eq 14
 grep -qi "model cap" /root/.pi/agent/AGENTS.md
+grep -q "docs/delegation-models.md" /root/.pi/agent/AGENTS.md
 test -L /root/.local/bin/pi-models-check
 test "$(/root/.local/bin/pi-models-check --list | wc -l)" -eq 14
-echo "model cap ok (14 ids, adapter roles inside the allow list, AGENTS.md table matches)"
+echo "model cap ok (14 ids, adapter roles inside the allow list, delegation-models table matches)"
 
 printf "\nVERIFY MODELS MERGE\n"
 test -f /root/.pi/agent/models.json

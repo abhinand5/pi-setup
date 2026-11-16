@@ -4,6 +4,8 @@ auth.json
 *.pem
 .env
 .env.*
+# Saved browser logins (uat.sh login): cookies of test accounts
+skills/browser-uat/.auth/
 
 # Pi runtime state
 sessions/

@@ -28,6 +28,37 @@ If `mcp__playwright__*` tools are absent, the server is not connected: run
 `pi mcp list`, then `/reload` (the tool list only refreshes on reload or a new
 session).
 
+## Logging in (server-side)
+
+The browser tools take field values only as arguments — that is, into the
+conversation. Test credentials must not go there, so the login is done out of
+band, by a script, and the agent only opens the already-authenticated session:
+
+```bash
+~/.pi/agent/skills/browser-uat/scripts/uat.sh login \
+  --url http://localhost/admin/login/sign-in \
+  --env ~/work/project/.env \
+  --send-selector .js_send_code \
+  --profile my-project
+```
+
+What it does: reads the phone and the one-time code from the project `.env`
+(variables `ADMIN_PHONE_NUMBER` / `ADMIN_PHONE_CODE` by default, override with
+`--phone-var` / `--code-var`), fills the sign-in form in a headless Chromium, and
+writes the browser state to `skills/browser-uat/.auth/<profile>.json` (mode 600,
+gitignored). The values travel through the environment, never argv — argv is
+visible in `ps`.
+
+After that the MCP server picks the state up on its next start: the Xvfb wrapper
+exports `PLAYWRIGHT_MCP_STORAGE_STATE` when the file exists, and `--isolated`
+still keeps the profile in memory. So run `/reload` once after the login, then
+navigate to any page — you are already logged in. `--profile` picks the file,
+`UAT_STORAGE_STATE` points the server at another one; `--dry-run` checks the
+paths without starting a browser.
+
+Project-specific details (form selectors, where the dev one-time code comes
+from) belong to the project skill — this section owns only the mechanism.
+
 ## Workflow
 
 1. **Write the QA inventory before touching the browser.** From the user's

@@ -15,6 +15,9 @@
 #   UAT_ARTIFACTS=DIR     screenshots/snapshots/logs (default $TMPDIR/browser-uat)
 #   UAT_IDLE_TIMEOUT=MS   close an idle browser (default 900000 = 15 min)
 #   UAT_MCP_PKG=SPEC      server package (default @playwright/mcp@0.0.84)
+#   UAT_STORAGE_STATE=P   saved login from `uat.sh login` (default
+#                         $PI_HOME/skills/browser-uat/.auth/default.json);
+#                         passed to the server as PLAYWRIGHT_MCP_STORAGE_STATE
 #   UAT_PLAYWRIGHT_CONFIG base config (default ~/.pi/agent/playwright-mcp.json)
 #
 # Any arguments are passed through to @playwright/mcp, except --config, which
@@ -141,6 +144,19 @@ derive_config() {
   rm -f "$out.err"
   printf '%s\n' "$out"
 }
+
+# --- saved login (uat.sh login) ---------------------------------------------
+# The server runs with --isolated (see mcp.json), so the profile lives in memory
+# and a saved storage state is the only way an authenticated session survives a
+# server restart. The file is written by `uat.sh login`; UAT_STORAGE_STATE points
+# the server at another profile.
+if [[ -z "${PLAYWRIGHT_MCP_STORAGE_STATE:-}" ]]; then
+  STATE_FILE="${UAT_STORAGE_STATE:-$PI_HOME/skills/browser-uat/.auth/default.json}"
+  if [[ -f "$STATE_FILE" ]]; then
+    export PLAYWRIGHT_MCP_STORAGE_STATE="$STATE_FILE"
+    log "saved login: $STATE_FILE"
+  fi
+fi
 
 ARGS=(--output-dir "$ARTIFACTS" --idle-timeout "$IDLE_TIMEOUT" --file-paths absolute)
 

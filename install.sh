@@ -514,6 +514,10 @@ if [[ "$RESTORE" == "1" ]]; then
   copy_dir_contents "$ROOT/themes" "$PI_HOME/themes"
   copy_dir_contents "$ROOT/skills" "$PI_HOME/skills"
   install_config_if_absent "$ROOT/config/AGENTS.md" "$PI_HOME/AGENTS.md" "AGENTS.md"
+  # The allowed-model table AGENTS.md points at. Policy, not machine-local
+  # config, so restore overwrites it: a stale table is what loses a delegation
+  # run. The backup made above covers a local edit (#15647).
+  copy_path "$ROOT/config/delegation-models.md" "$PI_HOME/docs/delegation-models.md"
   install_config_if_absent "$ROOT/config/pi-pstack-adapter.example.json" "$PI_HOME/pi-pstack-adapter.json" "pi-pstack-adapter.json"
   if compgen -G "$ROOT/skills/browser-uat/scripts/*.sh" >/dev/null; then
     run chmod +x "$PI_HOME/skills/browser-uat/scripts/"*.sh
