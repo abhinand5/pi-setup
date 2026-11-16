@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# redmine-file — обёртка над `redmine`, читающая длинный текст из файла.
+#
+# Зачем: `redmine issues create --description` и `update --note` принимают только строку, поэтому
+# описание на 8 КБ целиком попадало в переписку агента (и в журнал вызовов). Здесь агент передаёт
+# путь, содержимое читает обёртка.
+#
+# Использование:
+#   redmine-file issues create --project "МСБ-лизинг" --parent 15598 --subject "…" --description-file /tmp/desc.txt
+#   redmine-file issues update 15647 --status "Ожидает тестирование" --note-file /tmp/note.txt
+#   redmine-file issues update 15647 --note-file /tmp/note.txt --private-notes
+set -euo pipefail
+
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --description-file | --note-file)
+      flag="$1"; file="${2:-}"; shift 2
+      if [[ -z "$file" || ! -f "$file" ]]; then
+        echo "redmine-file: файл не найден: ${file:-<пусто>}" >&2
+        exit 2
+      fi
+      if [[ "$flag" == "--description-file" ]]; then
+        args+=(--description "$(cat "$file")")
+      else
+        args+=(--note "$(cat "$file")")
+      fi
+      ;;
+    --description-file=* | --note-file=*)
+      flag="${1%%=*}"; file="${1#*=}"; shift
+      if [[ ! -f "$file" ]]; then
+        echo "redmine-file: файл не найден: $file" >&2
+        exit 2
+      fi
+      if [[ "$flag" == "--description-file" ]]; then
+        args+=(--description "$(cat "$file")")
+      else
+        args+=(--note "$(cat "$file")")
+      fi
+      ;;
+    *)
+      args+=("$1"); shift
+      ;;
+  esac
+done
+
+exec redmine "${args[@]}"
