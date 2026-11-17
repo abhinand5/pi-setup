@@ -2,31 +2,23 @@
 
 Pi knows more model ids than this machine can reach. A listing from `pstack_adapter models`,
 `subagent({ action: "list" })`, or any catalog is **not** proof that the provider serves a model.
-**Since 2026-11-17 this machine routes every default through `https://routerai.ru/`** (provider id
-`routerai` in `~/.pi/agent/models.json`). The main session, `subagents.defaultModel`, every
-`agentOverrides.<name>.model`, every `subagents.modelScope` allow entry, every pstack role and
-panel, and the `observational-memory` observer/consolidator carry the `routerai/` prefix. The
-OpenRouter workspace guardrail ("model cap") below is history: it explains why these 14 ids were
-chosen, not which provider serves them now.
+An OpenRouter workspace guardrail ("model cap") serves exactly 14 model ids, and a fan-out that
+picks anything else loses the run with `404 ... 0 endpoints out of 14 ... guardrail restrictions`.
 
 ## Allowed
 
 **Before delegating or starting a pstack workflow, read `~/.pi/agent/docs/delegation-models.md`:**
 the 14 allowed ids, their prices, the cache-read ranking and the provider-routing note. Only ids
-from that table, prefixed `routerai/`, are policy — a model in the local catalog is not evidence
-the provider serves it. All 14 were checked against `GET https://routerai.ru/api/v1/models` and
-with a `max_tokens: 1` request on 2026-11-17.
+from that table are policy — a model in the local catalog is not evidence the cap serves it.
 
 ## Blocked
 
 - Everything else, including `deepseek/deepseek-v4-pro` and `-pro-0813`. The pro tier sits outside
-  the cap: it returned 404 from the OpenRouter guardrail, not from the model. This is what broke
-  the project reviewer once already.
+  the cap: it returns 404 from the guardrail, not from the model. This is what broke the project
+  reviewer once already.
 - `google/*`, any `gemini-*` id; `openai/*`, any `gpt-*`, `o3`, `o4` id; `anthropic/*`.
-- Every `openrouter/...` id. OpenRouter is no longer the default provider and its workspace cap
-  still governs that provider, so naming `openrouter/...` reaches the wrong provider.
-- Every `routerai/...` id outside the 14. routerai serves ~600 models and answers for all of them,
-  so a 200 is not evidence the id is inside the policy.
+- Every `routerai/...` id, including the ones whose name matches an allowed id. The cap covers
+  OpenRouter only, so routerai models are outside the policy even when they answer.
 
 Never delegate to a blocked model, never retry one after it fails, and never offer one as an
 option. Anything outside the table needs the user's explicit approval first.
@@ -40,7 +32,7 @@ One hard gate, in user config; do not weaken it without the user asking.
   starts, whoever started it (pstack skill, workflow, or a bare `subagent` call). The repo example
   ships the same list with `strict: false`, so a machine whose cap differs still launches instead of
   refusing every call.
-- `subagents.defaultModel` is `routerai/z-ai/glm-5.3-flash` and every bundled agent has an
+- `subagents.defaultModel` is `openrouter/z-ai/glm-5.3-flash` and every bundled agent has an
   explicit `agentOverrides.<name>.model`, so a call that names no model lands on a capped model
   instead of the parent's. `inherit` passes only while the parent session model is itself inside
   the cap, which is the intended behaviour, not an exemption.
@@ -55,9 +47,8 @@ One hard gate, in user config; do not weaken it without the user asking.
   blocked every delegation that named no model, which broke `code-review` and any skill that lets
   a child inherit, so it was removed on purpose. `modelScope` is the gate.
 - The table in `~/.pi/agent/docs/delegation-models.md` is a dated observation, not a standing
-  fact. Re-verify it before trusting it after a provider or guardrail change: list
-  `GET https://routerai.ru/api/v1/models` and send one `max_tokens: 1` request per id. A 404 is
-  the provider, not local config. (`pi-models-check` no longer exists on this machine.)
+  fact. Re-verify it with `pi-models-check` (one `max_tokens: 1` request per id, exit 1 on 404)
+  before trusting it after a provider or guardrail change. A 404 there is the cap, not local config.
 
 ## Rules
 
@@ -78,9 +69,8 @@ One hard gate, in user config; do not weaken it without the user asking.
   `claude-opus-5` / `claude-sonnet-5` / `gpt-5.6-sol` inside 16 minutes were $6.08 — 27% of the
   week's $22.73, at $0.05-0.16 per call. Those ids are blocked now; the replacement for such a
   comparison is `glm-5.3` + `minimax-m3`, not a search for a stronger family.
-- A model that answers `curl` may still be outside the policy; only the table in
-  `~/.pi/agent/docs/delegation-models.md` is policy. routerai serves ~600 ids, so a 200 proves
-  nothing about the 14.
+- A model that answers `curl` may still be outside the cap; only the table in
+  `~/.pi/agent/docs/delegation-models.md` is policy.
 - When a delegation fails on its model, report the failure and name the model or role. Do not
   silently substitute another model.
 

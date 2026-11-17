@@ -1,16 +1,16 @@
 {
   "models": {
-    "feature": "routerai/z-ai/glm-5.3-flash:medium",
-    "refactoring": "routerai/z-ai/glm-5.3-flash:medium",
-    "bug-fix": "routerai/z-ai/glm-5.3-flash:medium",
-    "perf-issue": "routerai/z-ai/glm-5.3-flash:medium",
-    "hillclimb": "routerai/z-ai/glm-5.3-flash:medium",
-    "judgment": "routerai/z-ai/glm-5.3:high",
-    "strongest-judgment": "routerai/z-ai/glm-5.3:xhigh",
-    "general": "routerai/z-ai/glm-5.3-flash:medium",
-    "arena-runners": "routerai/z-ai/glm-5.3-flash:high routerai/deepseek/deepseek-v4.1-flash-1017:high",
-    "arena-cross-judge-pool": "routerai/z-ai/glm-5.3:high routerai/minimax/minimax-m3:high",
-    "architect-runners": "routerai/z-ai/glm-5.3-flash:high routerai/deepseek/deepseek-v4.1-flash-1017:high",
-    "interrogate-reviewers": "routerai/z-ai/glm-5.3-flash:high routerai/deepseek/deepseek-v4.1-flash-1017:high"
+    "feature": "openrouter/z-ai/glm-5.3-flash:medium",
+    "refactoring": "openrouter/z-ai/glm-5.3-flash:medium",
+    "bug-fix": "openrouter/z-ai/glm-5.3-flash:medium",
+    "perf-issue": "openrouter/z-ai/glm-5.3-flash:medium",
+    "hillclimb": "openrouter/z-ai/glm-5.3-flash:medium",
+    "judgment": "openrouter/z-ai/glm-5.3:high",
+    "strongest-judgment": "openrouter/z-ai/glm-5.3:xhigh",
+    "general": "openrouter/z-ai/glm-5.3-flash:medium",
+    "arena-runners": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
+    "arena-cross-judge-pool": "openrouter/z-ai/glm-5.3:high openrouter/minimax/minimax-m3:high",
+    "architect-runners": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high",
+    "interrogate-reviewers": "openrouter/z-ai/glm-5.3-flash:high openrouter/deepseek/deepseek-v4.1-flash-1017:high"
   }
 }
