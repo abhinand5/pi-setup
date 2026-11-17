@@ -619,8 +619,9 @@ fi
 if [[ -f "$PI_HOME/docs/delegation-models.md" ]]; then
   cp "$PI_HOME/docs/delegation-models.md" "$ROOT/config/delegation-models.md"
 fi
-# ru-spellcheck grows its allow list through `--add`; the live file is the source
-# of truth, so a sync copies it back and the seed copy never drifts.
+# ru-spellcheck grows the machine-wide allow list through `--add-personal` (inside a repository
+# `--add` writes that repository's own .ru-spellcheck-allow instead, which is committed there); the
+# live file is the source of truth, so a sync copies it back and the seed copy never drifts.
 spellcheck_allow="${XDG_CONFIG_HOME:-$HOME/.config}/ru-spellcheck/allow.txt"
 if [[ -f "$spellcheck_allow" ]]; then
   mkdir -p "$ROOT/config/ru-spellcheck"
