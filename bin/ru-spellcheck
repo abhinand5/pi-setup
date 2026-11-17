@@ -9,8 +9,16 @@ Usage:
   ru-spellcheck FILE...           check files (Markdown/Textile/plain)
   cmd | ru-spellcheck -           check stdin
   ru-spellcheck --homoglyph-only F   only the hard error class (exit 1 on hit)
-  ru-spellcheck --add СЛОВО       add a known-good word to the allowlist
+  ru-spellcheck --add СЛОВО       add a known-good word to the project's allowlist
+  ru-spellcheck --add-personal СЛОВО  add it to the personal allowlist instead
   ru-spellcheck --json FILE...    machine-readable
+
+Allowlists, applied on top of hunspell:
+  * personal: $XDG_CONFIG_HOME/ru-spellcheck/allow.txt (machine-wide, travels with the agent);
+  * project:  .ru-spellcheck-allow at the repository root, one word per line. Project jargon
+    belongs there, not in the personal file: the file is committed with the code, so every
+    agent and the CI see the same vocabulary. Files are searched upwards from the checked
+    file (or the cwd for stdin) up to the git root; the personal file still applies.
 
 Exit: 0 clean, 1 findings, 2 usage/dictionary problem.
 Masked as non-prose: fenced code, `inline code`, URLs, HTML tags, paths, versions,
@@ -23,6 +31,7 @@ import sys
 
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 ALLOW = os.path.join(CONFIG_HOME, "ru-spellcheck", "allow.txt")
+REPO_ALLOW_NAME = ".ru-spellcheck-allow"
 BASELINE = os.path.join(CONFIG_HOME, "ru-spellcheck", "baseline.txt")
 WORD = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]+")
 
@@ -120,17 +129,64 @@ def is_fragment(seg, stems):
     return False
 
 
-def load_allow():
+def repo_root(start):
+    """Nearest directory with a .git entry (worktrees have a .git file), or None outside a repo."""
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def repo_allow_files(paths):
+    """Project allowlists: .ru-spellcheck-allow from each checked file up to its git root.
+
+    Walks up rather than taking only the root: a checked file may live in a nested checkout, and
+    silently ignoring its dictionary would look like a spelling error in the file's own jargon.
+    """
+    found = []
+    for path in paths:
+        # `-` — stdin: the project dictionary is the one of the current directory.
+        start = os.getcwd() if path in ("-", "<stdin>") else os.path.dirname(os.path.abspath(path))
+        root = repo_root(start or os.getcwd())
+        if root is None:
+            continue
+        cur = os.path.abspath(start or os.getcwd())
+        while True:
+            candidate = os.path.join(cur, REPO_ALLOW_NAME)
+            if os.path.isfile(candidate) and candidate not in found:
+                found.append(candidate)
+            if cur == root:
+                break
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+    return found
+
+
+def read_allow_file(path):
     """Allowlist entries are stem-expanded, so `скилл` covers скиллов/скиллу/скиллах."""
-    if not os.path.exists(ALLOW):
-        return set()
     out = set()
-    with open(ALLOW, encoding="utf-8") as fh:
+    if not path or not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             w = line.strip().lower()
             if w and not w.startswith("#"):
                 out.add(w)
                 out.update(stem(w))
+    return out
+
+
+def load_allow(extra_files=()):
+    """Personal allowlist plus the project allowlists found next to the checked files."""
+    out = read_allow_file(ALLOW)
+    for path in extra_files:
+        out |= read_allow_file(path)
     return out
 
 
@@ -219,14 +275,19 @@ def main(argv):
             fh.write("\n".join(sorted(words)) + "\n")
         print(f"baseline: {len(words)} forms -> {BASELINE}")
         return 0
-    if argv[0] == "--add":
+    if argv[0] in ("--add", "--add-personal"):
         if len(argv) < 2:
             return 2
-        os.makedirs(os.path.dirname(ALLOW), exist_ok=True)
-        with open(ALLOW, "a", encoding="utf-8") as fh:
+        # Project jargon belongs to the project: inside a repository `--add` writes the file that is
+        # committed with the code, so the next agent does not re-learn the same words (#15717 п.4).
+        target = ALLOW
+        if argv[0] == "--add" and repo_root(os.getcwd()) is not None:
+            target = os.path.join(repo_root(os.getcwd()), REPO_ALLOW_NAME)
+        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+        with open(target, "a", encoding="utf-8") as fh:
             for w in argv[1:]:
                 fh.write(w.lower() + "\n")
-        print(f"added: {' '.join(argv[1:])} -> {ALLOW}")
+        print(f"added: {' '.join(argv[1:])} -> {target}")
         return 0
     as_json = "--json" in argv
     homoglyph_only = "--homoglyph-only" in argv
@@ -243,7 +304,9 @@ def main(argv):
     if homoglyph_only:
         d, allow, stems = None, set(), []  # script-mixing needs no dictionary at all
     else:
-        d, allow = load_dict(), load_allow()
+        # Project allowlists are looked up from the checked files, so stdin uses the cwd.
+        d = load_dict()
+        allow = load_allow(repo_allow_files(paths))
         stems = load_stems()
     baseline = load_baseline(baseline_path)  # opt-in: --baseline PATH
     results = []

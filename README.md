@@ -59,7 +59,8 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 - `bin/ru-spellcheck` — deterministic Russian prose checker (homoglyphs + hunspell `ru_RU`)
   - `--homoglyph-only` flags Latin letters inside Cyrillic words (`лоkalной`, `восстанóвленное`, `обéих`) with no dictionary and no false positives; the full run also reports words missing from `ru_RU` with suggestions
   - code spans, fenced blocks, URLs, paths, and filenames are masked, so identifiers are never flagged
-  - `--add СЛОВО` grows the allow list in `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`; the repo ships a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
+  - `--add СЛОВО` inside a repository grows that repository's own `.ru-spellcheck-allow` (committed with the code, found upwards from the checked file, applied on top of the personal list); `--add-personal` keeps the machine-wide `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`, which the repo ships as a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
+  - `tests/ru-spellcheck-repo-dict.sh` checks the project dictionary and both `--add` targets on a throwaway repository
   - needs `python3-enchant` and `hunspell-ru` for the full run; `--homoglyph-only` needs neither, so it also works under a project venv that shadows `python3`
   - exit 1 on findings, so it can gate a publish step
 - `bin/pi-models-check` — probes `subagents.modelScope.allow` against the provider
