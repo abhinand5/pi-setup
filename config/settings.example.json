@@ -85,8 +85,7 @@
         "reviewer": {
           "allow": [
             "openrouter/z-ai/glm-5.3-flash",
-            "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "openrouter/z-ai/glm-5.3"
+            "openrouter/deepseek/deepseek-v4.1-flash-1017"
           ]
         },
         "oracle": {

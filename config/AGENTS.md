@@ -35,11 +35,14 @@ One hard gate, in user config; do not weaken it without the user asking.
 - `subagents.defaultModel` is `openrouter/z-ai/glm-5.3-flash` and every bundled agent has an
   explicit `agentOverrides.<name>.model`, so a call that names no model lands on a capped model
   instead of the parent's. `inherit` passes only while the parent session model is itself inside
-  the cap, which is the intended behaviour, not an exemption.
+  the cap, which is the intended behaviour, not an exemption. For `reviewer` the override is
+  `deepseek-v4.1-flash-1017`, and it is the only deepseek variant its allow list accepts: naming
+  `openrouter/deepseek/deepseek-v4.1-flash` (no `-1017`) passes the cap and fails the gate.
 - `reviewer`, `oracle`, and `evidence-auditor` all default to `deepseek-v4.1-flash-1017` at
-  thinking `medium`, and additionally carry a per-agent allow list of `glm-5.3-flash`,
-  `deepseek-v4.1-flash-1017`, and `glm-5.3`, so a review cannot escalate to `glm-5.2`; naming
-  `glm-5.3` explicitly is still allowed for a review that has to be argued at full strength.
+  thinking `medium`, and additionally carry a per-agent allow list, so a review cannot escalate to
+  `glm-5.2`. `reviewer` may name only `glm-5.3-flash` and `deepseek-v4.1-flash-1017`: no
+  full-strength escalation on a review seat. `oracle` and `evidence-auditor` also allow `glm-5.3`
+  for a review that has to be argued at full strength.
 - `~/.pi/agent/pi-pstack-adapter.json` pins every pstack role and panel to a capped model (see the
   `Model roles` table of `pstack_adapter status`). `glm-5.3` is assigned only to `judgment`,
   `strongest-judgment`, and one seat of `arena-cross-judge-pool`; every runner, reviewer, and
