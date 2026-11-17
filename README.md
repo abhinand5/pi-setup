@@ -458,6 +458,20 @@ The enforcement layer behind both is `subagents.modelScope` in `settings.json`, 
 proves the allow list against the provider. Background and the evidence:
 [docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-outside-the-cap).
 
+### `/review-loop`: the reviewer stays in its own directory
+
+`patches/pi-subagents-review-loop-scope.sh` adds one paragraph to the packaged `/review-loop`
+prompt: a reviewer works only in the directory it was given and must not read, quote, or claim the
+uncommitted work of a sibling worktree. `cwd` alone is not enough — `git worktree list` invites the
+detour by itself, and a reviewer that took it reported 13 dirty files of another session as findings
+about the diff it was given (#15674 п.3). The edit is idempotent and survives `pi update --extensions`
+through `install.sh`:
+
+```bash
+./patches/pi-subagents-review-loop-scope.sh --check     # exit 1 if the paragraph is missing
+./patches/pi-subagents-review-loop-scope.sh             # apply
+```
+
 ## Voice dictation (Handy + Micme)
 
 `alt+m` toggles dictation inside Pi. Audio is recorded with `ffmpeg`, transcribed by the local [Handy](https://handy.computer) CLI, and appended to the focused editor for review — no cloud STT, no API key.
