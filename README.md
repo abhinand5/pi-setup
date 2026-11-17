@@ -44,6 +44,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 | Extensions | welcome header, context breakdown, file-change review, safety guard, custom footer, local model manager |
 | Config examples | Safe `settings.example.json`, `mcp.example.json`, `micme.example.json`, `playwright-mcp.json`, and the `pi-pstack-adapter.json` role pinning; the settings example pins OpenRouter through the local xray proxy and gates delegation with `subagents.modelScope` |
 | Model cap check | `pi-models-check` probes every id in the delegation allow list against the provider, so a catalog entry is never mistaken for a served model |
+| Russian prose check | `ru-spellcheck` catches Latin homoglyphs inside Cyrillic words and dictionary misses in Russian text, so a flash-tier model's corrupted prose is caught before it is published |
 | Voice dictation | Micme wired to the local [Handy](https://handy.computer) CLI — `alt+m` to dictate, no cloud STT, no API key |
 | Browser automation | Playwright MCP server for interactive UAT on a private Xvfb display (no focus stealing), with a `browser-uat` skill and `uat.sh` environment CLI |
 | Themes | `nebula-pulse`, `opencode`, `tokyo-night`, `one-dark-pro`, and more |
@@ -55,6 +56,12 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - suppresses Pi's large built-in update boxes via `PI_OFFLINE=1` after its own compact notice
   - detects the real Pi binary from `PI_REAL_BIN`, `/usr/local/bin/pi`, `/usr/bin/pi`, or `/opt/homebrew/bin/pi`
   - preserves Pi's native themed header and loaded skills/extensions/themes listing
+- `bin/ru-spellcheck` — deterministic Russian prose checker (homoglyphs + hunspell `ru_RU`)
+  - `--homoglyph-only` flags Latin letters inside Cyrillic words (`лоkalной`, `восстанóвленное`, `обéих`) with no dictionary and no false positives; the full run also reports words missing from `ru_RU` with suggestions
+  - code spans, fenced blocks, URLs, paths, and filenames are masked, so identifiers are never flagged
+  - `--add СЛОВО` grows the allow list in `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`; the repo ships a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
+  - needs `python3-enchant` and `hunspell-ru` for the full run; `--homoglyph-only` needs neither, so it also works under a project venv that shadows `python3`
+  - exit 1 on findings, so it can gate a publish step
 - `bin/pi-models-check` — probes `subagents.modelScope.allow` against the provider
   - `max_tokens: 1` per id, key from the environment or `models.json`; prints 200/404 per model
   - turns "the catalog lists it" into "the provider answered", which is the only evidence that matters under a workspace guardrail
@@ -212,6 +219,7 @@ This installs:
 - `pi-setup-sync` into `~/.local/bin`
 - compact launcher `bin/pi` into `~/.local/bin/pi`
 - `bin/pi-models-check` into `~/.local/bin/pi-models-check`
+- `bin/ru-spellcheck` into `~/.local/bin/ru-spellcheck`, plus the seed allow list into `~/.config/ru-spellcheck/allow.txt`
 
 It also removes any legacy settings entry that points Pi at this repo as an active package.
 

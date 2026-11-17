@@ -224,6 +224,22 @@ test -L /root/.local/bin/pi-models-check
 test "$(/root/.local/bin/pi-models-check --list | wc -l)" -eq 14
 echo "model cap ok (14 ids, adapter roles inside the allow list, delegation-models table matches)"
 
+printf "\nVERIFY RU-SPELLCHECK\n"
+test -L /root/.local/bin/ru-spellcheck
+test -f /root/.config/ru-spellcheck/allow.txt
+# --homoglyph-only must work without python3-enchant: the container has none, and
+# a project venv shadowing python3 is the real-world failure this guards against.
+printf 'проверка лоkalной и нузен\n' > /tmp/ru-probe.txt
+set +e
+/root/.local/bin/ru-spellcheck --homoglyph-only /tmp/ru-probe.txt > /tmp/ru-probe.out
+ru_rc=$?
+set -e
+test "$ru_rc" -eq 1
+grep -q HOMOGLYPH /tmp/ru-probe.out
+printf 'чистый русский текст\n' > /tmp/ru-clean.txt
+/root/.local/bin/ru-spellcheck --homoglyph-only /tmp/ru-clean.txt
+echo "ru-spellcheck ok (homoglyph gate without enchant, clean text passes)"
+
 printf "\nVERIFY MODELS MERGE\n"
 test -f /root/.pi/agent/models.json
 jq -e ".providers.custom.baseUrl == \"https://example.invalid/v1\"" /root/.pi/agent/models.json >/dev/null

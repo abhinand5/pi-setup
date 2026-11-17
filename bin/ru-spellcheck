@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""ru-spellcheck — deterministic Russian prose checker (homoglyphs + hunspell ru_RU).
+
+Catches the failure class seen on 2026-11-16 in msb-lk sessions:
+  * Latin homoglyphs / accented Latin inside Cyrillic words: лоkalной, восстанóвленное, обéих, мoлча
+  * unstressed-vowel corruption: нузен, открито, которий, стот, деньгы, напровление
+
+Usage:
+  ru-spellcheck FILE...           check files (Markdown/Textile/plain)
+  cmd | ru-spellcheck -           check stdin
+  ru-spellcheck --homoglyph-only F   only the hard error class (exit 1 on hit)
+  ru-spellcheck --add СЛОВО       add a known-good word to the allowlist
+  ru-spellcheck --json FILE...    machine-readable
+
+Exit: 0 clean, 1 findings, 2 usage/dictionary problem.
+Masked as non-prose: fenced code, `inline code`, URLs, HTML tags, paths, versions,
+Latin tokens, and hyphen compounds whose parts are each pure-script (Redmine-задачи).
+"""
+import json
+import os
+import re
+import sys
+
+CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+ALLOW = os.path.join(CONFIG_HOME, "ru-spellcheck", "allow.txt")
+BASELINE = os.path.join(CONFIG_HOME, "ru-spellcheck", "baseline.txt")
+WORD = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]+")
+
+MASK_PATTERNS = [
+    re.compile(r"```.*?```", re.S),
+    re.compile(r"`[^`\n]*`"),
+    re.compile(r"https?://\S+"),
+    re.compile(r"<[^>\n]{1,80}>"),
+    re.compile(r"(?<![\w])(?:~|\.{0,2})?/[\w./-]+"),  # absolute/relative paths
+    re.compile(r"(?<![\w])[\w-]+(?:\.[\w-]+)+/[\w./-]+"),  # dir/file.ext, owner/repo.git
+    re.compile(r"(?<![\w])[\w.-]*\.[A-Za-z]{1,5}\b"),  # bare filename: лизинга.md, X.php
+    re.compile(r"\b[\w-]+@[\w.-]+\b"),
+    re.compile(r"\bv?\d+(?:\.\d+)+[\w-]*\b"),
+    re.compile(r"\b[0-9a-f]{7,40}\b"),
+]
+
+TOKEN = re.compile(r"[^\s()\[\]{}<>«»„“”\"'`|,;:!?…—–+=→·/\\’@%$#№]+")
+EDGE = "*_~"  # markdown emphasis clinging to a word: **Что, задачи.**
+ABBREV = re.compile(r"[А-Яа-яЁё]{1,3}\.(?:[А-Яа-яЁё]{1,3}\.)*[А-Яа-яЁё]{0,3}\.?")
+CYR = re.compile(r"[А-Яа-яЁё]")
+LAT = re.compile(r"[A-Za-z]")
+# Latin letters carrying diacritics: the signature of "восстанóвленное", "обéих".
+DIACRITIC_LATIN = re.compile(r"[\u00c0-\u024f\u1e00-\u1eff]")
+SCRIPT_MIX = re.compile(r"[А-Яа-яЁё].*[A-Za-z\u00c0-\u024f]|[A-Za-z\u00c0-\u024f].*[А-Яа-яЁё]")
+
+DICT_NAMES = ("ru_RU", "ru", "ru_RU.UTF-8")
+
+
+SYSTEM_PY = "/usr/bin/python3"
+
+
+def need_enchant():
+    """Import enchant, or re-exec under the system interpreter when a project venv shadows python3."""
+    try:
+        import enchant  # noqa: F401
+        return
+    except ImportError:
+        pass
+    in_venv = sys.prefix != sys.base_prefix  # venv/bin/python3 is a symlink: compare prefixes
+    if (os.environ.get("RU_SPELLCHECK_REEXEC") != "1" and os.path.exists(SYSTEM_PY)
+            and (in_venv or os.path.realpath(sys.executable) != os.path.realpath(SYSTEM_PY))):
+        os.environ["RU_SPELLCHECK_REEXEC"] = "1"
+        os.execv(SYSTEM_PY, [SYSTEM_PY, os.path.abspath(__file__)] + sys.argv[1:])
+    sys.exit("ru-spellcheck: python3-enchant not installed (venv python3 shadowed the system one; "
+             f"try {SYSTEM_PY})")
+
+
+def load_dict():
+    need_enchant()
+    import enchant
+    for name in DICT_NAMES:
+        try:
+            d = enchant.Dict(name)
+            if d.tag:
+                return d
+        except Exception:
+            continue
+    sys.exit("ru-spellcheck: no Russian hunspell dictionary (apt install hunspell-ru)")
+
+
+def stem(w):
+    """Crude Russian stem, only for baseline comparison: скиллу/скиллы/скиллов -> скилл."""
+    w = w.lower()
+    for cut in (4, 3, 2, 1):
+        if len(w) - cut >= 4:
+            yield w[:-cut]
+    yield w
+
+
+def load_baseline(path):
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return {line.strip() for line in fh if line.strip()}
+
+
+def load_stems(path="/usr/share/hunspell/ru_RU.dic"):
+    """Bare dictionary stems, for the fragment rule (постр-процессоров -> постр)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            stems = sorted({ln.split("/")[0].strip().lower() for ln in fh if ln.strip()})
+        return stems
+    except OSError:
+        return []
+
+
+def is_fragment(seg, stems):
+    if len(seg) < 4 or not stems:
+        return False
+    import bisect
+    i = bisect.bisect_left(stems, seg)
+    for j in (i, i - 1):
+        if 0 <= j < len(stems) and stems[j].startswith(seg):
+            return True
+    return False
+
+
+def load_allow():
+    """Allowlist entries are stem-expanded, so `скилл` covers скиллов/скиллу/скиллах."""
+    if not os.path.exists(ALLOW):
+        return set()
+    out = set()
+    with open(ALLOW, encoding="utf-8") as fh:
+        for line in fh:
+            w = line.strip().lower()
+            if w and not w.startswith("#"):
+                out.add(w)
+                out.update(stem(w))
+    return out
+
+
+def _blank(match):
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def mask(text):
+    for pat in MASK_PATTERNS:
+        text = pat.sub(_blank, text)
+    return text
+
+
+def is_known(d, word, allow):
+    low = word.lower().strip(".,;:!?«»()\"'")
+    if not low or low in allow:
+        return True
+    if any(v in allow for v in stem(low)):
+        return True
+    variants = {low, low.replace("ё", "е"), low.replace("е", "ё")}
+    caps = {v.capitalize() for v in variants} | variants
+    return any(d.check(v) for v in caps)
+
+
+def segments(tok):
+    return [s for s in re.split(r"[-‑–]", tok) if s]
+
+
+def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None):
+    findings = []
+    hidden = mask(text)
+    line_starts = [0]
+    for m in re.finditer(r"\n", hidden):
+        line_starts.append(m.end())
+    for m in TOKEN.finditer(hidden):
+        tok = text[m.start():m.end()].strip(EDGE)
+        if not CYR.search(tok):
+            continue
+        if tok.isupper() and len(tok) <= 5 and not LAT.search(tok):
+            continue  # БД, ВР, ОР: abbreviation, not prose
+        if len(CYR.findall(tok)) < 3 or ABBREV.fullmatch(tok):
+            continue  # "п.1", "т.е.", "п.п.", single letters: not prose
+        segs = segments(tok)
+        # 1. hard error: one segment mixing scripts, or Latin diacritics in a Cyrillic word
+        bad_script = any(SCRIPT_MIX.search(s) and CYR.search(s) for s in segs)
+        diacritic = bool(DIACRITIC_LATIN.search(tok)) and bool(CYR.search(tok))
+        if bad_script or diacritic:
+            findings.append((m.start(), "HOMOGLYPH", tok.rstrip("."), ""))
+            continue
+        if homoglyph_only:
+            continue
+        # 2. dictionary miss, per segment (so "golden-фикстуры" is judged on "фикстуры")
+        for s in segs:
+            if not CYR.search(s) or LAT.search(s):
+                continue  # pure-Latin segment of a compound: not our business
+            if is_known(d, s, allow):
+                continue
+            if len(segs) > 1 and is_fragment(s, stems or []):
+                continue  # left half of a hyphenated compound: постр-процессоров
+            if baseline is not None and any(v in baseline for v in stem(s)):
+                continue  # jargon/anglicism already used in this project: not a spelling error
+            sugg = d.suggest(s.strip(".,;:!?«»*_"))[:3]
+            findings.append((m.start(), "SPELLING", s.rstrip("."), ", ".join(sugg)))
+    out = []
+    for pos, kind, word, sugg in findings:
+        line = max(i for i, st in enumerate(line_starts) if st <= pos) + 1
+        col = pos - line_starts[line - 1] + 1
+        out.append({"file": path, "line": line, "col": col, "kind": kind,
+                    "word": word, "suggest": sugg})
+    return out
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if argv[0] == "--build-baseline":
+        paths = [a for a in argv[1:] if not a.startswith("--")]
+        words = set()
+        for p in paths:
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                for w in WORD.findall(fh.read()):
+                    words.add(w.lower())
+        os.makedirs(os.path.dirname(BASELINE), exist_ok=True)
+        with open(BASELINE, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(sorted(words)) + "\n")
+        print(f"baseline: {len(words)} forms -> {BASELINE}")
+        return 0
+    if argv[0] == "--add":
+        if len(argv) < 2:
+            return 2
+        os.makedirs(os.path.dirname(ALLOW), exist_ok=True)
+        with open(ALLOW, "a", encoding="utf-8") as fh:
+            for w in argv[1:]:
+                fh.write(w.lower() + "\n")
+        print(f"added: {' '.join(argv[1:])} -> {ALLOW}")
+        return 0
+    as_json = "--json" in argv
+    homoglyph_only = "--homoglyph-only" in argv
+    no_baseline = "--no-baseline" in argv
+    baseline_path = None  # opt-in only: a model-output baseline also hides real errors
+    for i, a in enumerate(argv):
+        if a == "--baseline" and i + 1 < len(argv):
+            baseline_path = argv[i + 1]
+    skip = {"--json", "--homoglyph-only", "--no-baseline", "--baseline"}
+    paths = [a for a in argv if not a.startswith("--") and a != baseline_path]
+    paths = [a for a in paths if a not in skip]
+    if not paths:
+        return 2
+    if homoglyph_only:
+        d, allow, stems = None, set(), []  # script-mixing needs no dictionary at all
+    else:
+        d, allow = load_dict(), load_allow()
+        stems = load_stems()
+    baseline = load_baseline(baseline_path)  # opt-in: --baseline PATH
+    results = []
+    if paths == ["-"]:
+        results += check_text(sys.stdin.read(), d, allow, "<stdin>", homoglyph_only, baseline, stems)
+    else:
+        for p in paths:
+            try:
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    results += check_text(fh.read(), d, allow, p, homoglyph_only, baseline, stems)
+            except (OSError, IsADirectoryError) as exc:
+                print(f"ru-spellcheck: {p}: {exc}", file=sys.stderr)
+                return 2
+    if as_json:
+        print(json.dumps(results, ensure_ascii=False, indent=1))
+    else:
+        for r in results:
+            tail = f"  -> {r['suggest']}" if r["suggest"] else ""
+            print(f"{r['file']}:{r['line']}:{r['col']}  {r['kind']:9s} {r['word']}{tail}")
+        if results:
+            kinds = {}
+            for r in results:
+                kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+            print("\n" + ", ".join(f"{k}: {v}" for k, v in sorted(kinds.items())))
+    return 1 if results else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

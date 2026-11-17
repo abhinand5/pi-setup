@@ -594,7 +594,7 @@ cd "$ROOT"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/pi-pstack-adapter.example.json"
+  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt"
   exit 0
 fi
 
@@ -618,6 +618,13 @@ if [[ -f "$PI_HOME/AGENTS.md" ]]; then
 fi
 if [[ -f "$PI_HOME/docs/delegation-models.md" ]]; then
   cp "$PI_HOME/docs/delegation-models.md" "$ROOT/config/delegation-models.md"
+fi
+# ru-spellcheck grows its allow list through `--add`; the live file is the source
+# of truth, so a sync copies it back and the seed copy never drifts.
+spellcheck_allow="${XDG_CONFIG_HOME:-$HOME/.config}/ru-spellcheck/allow.txt"
+if [[ -f "$spellcheck_allow" ]]; then
+  mkdir -p "$ROOT/config/ru-spellcheck"
+  cp "$spellcheck_allow" "$ROOT/config/ru-spellcheck/allow.txt"
 fi
 
 validate_json "$ROOT/package.json" "$ROOT/config/settings.example.json"

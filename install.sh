@@ -734,6 +734,19 @@ install_bin_helpers() {
 
 install_bin_helpers
 
+# ru-spellcheck reads its allow list from XDG config. Seed it from the repo copy
+# only when absent: the live file grows through `ru-spellcheck --add`, and those
+# additions are the point, so a restore must not clobber them.
+install_spellcheck_allow() {
+  local cfg_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  install_config_if_absent \
+    "$ROOT/config/ru-spellcheck/allow.txt" \
+    "$cfg_home/ru-spellcheck/allow.txt" \
+    "ru-spellcheck allow list"
+}
+
+install_spellcheck_allow
+
 if [[ -n "$BACKUP_DIR" ]]; then
   echo "To revert this install: $ROOT/install.sh --revert '$BACKUP_DIR'"
 fi
