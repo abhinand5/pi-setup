@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# rg wrapper for agent sessions (#15675 п.1).
+#
+# `rg -r` is --replace: it substitutes the matched text, it does not recurse.
+# `rg -rn 'x'` rewrites every match into `n`, so the code that comes back is not
+# the code that is on disk. rg recurses by default, the flag is never needed, and
+# a rule in AGENTS.md did not survive a third session — this is the gate instead.
+#
+# An empty pattern is the same class of accident: it matches every line. One call
+# with `-r`, an empty pattern and `-l` returned 18 829 lines (50 KB, cut by the
+# tool limit) and the next file read followed that noise.
+#
+# Everything else is passed through to the real rg untouched. install.sh links
+# this file into ~/.local/bin, which comes before /usr/bin in PATH.
+
+set -uo pipefail
+
+PROG='rg-обёртка'
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  printf '  %s\n' "$2" >&2
+  exit 2
+}
+
+# Абсолютный путь этого файла: сравнением с ним отсеивается сам сторож, когда
+# `type -P -a rg` первым отдаёт ~/.local/bin/rg (симлинк на этот скрипт).
+self_path() {
+  local path="${BASH_SOURCE[0]}"
+  readlink -f "$path" 2>/dev/null && return 0
+  printf '%s\n' "$path"
+}
+
+resolved() {
+  readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+find_real_rg() {
+  local self candidate
+  self="$(self_path)"
+
+  if [[ -n "${PI_REAL_RG:-}" && -x "${PI_REAL_RG}" ]]; then
+    printf '%s\n' "${PI_REAL_RG}"
+    return 0
+  fi
+
+  for candidate in /usr/bin/rg /usr/local/bin/rg /bin/rg; do
+    [[ -x "$candidate" ]] || continue
+    [[ "$(resolved "$candidate")" == "$self" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  while IFS= read -r candidate; do
+    [[ -x "$candidate" ]] || continue
+    [[ "$(resolved "$candidate")" == "$self" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(type -P -a rg 2>/dev/null || true)
+
+  return 1
+}
+
+# Короткие флаги rg, которые забирают следующий аргумент как значение. Нужны,
+# чтобы не принять это значение за шаблон: `rg -e -r` — легальный поиск строки
+# «-r», и отказом он быть не должен.
+short_takes_value() {
+  case "$1" in
+    A|B|C|d|E|e|f|g|j|M|m|T|t) return 0 ;;
+  esac
+  return 1
+}
+
+long_takes_value() {
+  case "$1" in
+    --regexp|--file|--glob|--iglob|--type|--type-not|--type-add|--max-count|--max-depth|\
+    --after-context|--before-context|--context|--encoding|--engine|--threads|--max-columns|\
+    --max-filesize|--pre|--pre-glob|--sort|--sortr|--colors|--color|--ignore-file|\
+    --path-separator|--field-context-separator|--field-match-separator|--context-separator|\
+    --dfa-size-limit|--replace)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+REPLACE_HINT='-r у rg — замена совпадений, а не рекурсия; нужен -n (номер строки) или -l (только имена файлов)'
+EMPTY_HINT='пустой шаблон совпадает с любой строкой — задайте, что искать'
+
+# Проверка аргументов: отказ на -r/--replace и на пустой шаблон, всё остальное
+# отдаётся настоящему rg как есть.
+check_args() {
+  local -a args=("$@")
+  local i=0 n=${#args[@]} arg
+  local explicit_pattern=0 have_pattern=0 end_of_flags=0 pattern=''
+
+  while (( i < n )); do
+    arg="${args[i]}"
+    i=$(( i + 1 ))
+
+    if (( end_of_flags )); then
+      if (( ! have_pattern && ! explicit_pattern )); then
+        pattern="$arg"
+        have_pattern=1
+      fi
+      continue
+    fi
+
+    case "$arg" in
+      --)
+        end_of_flags=1
+        ;;
+      --replace|--replace=*)
+        die "$REPLACE_HINT" 'рекурсия у rg по умолчанию: флаг не нужен'
+        ;;
+      --regexp=*)
+        explicit_pattern=1
+        [[ -n "${arg#*=}" ]] || die "$EMPTY_HINT" 'нужен непустой шаблон'
+        ;;
+      --file=*)
+        explicit_pattern=1
+        ;;
+      --*)
+        if long_takes_value "$arg"; then
+          case "$arg" in
+            --regexp)
+              explicit_pattern=1
+              (( i < n )) && [[ -z "${args[i]}" ]] && die "$EMPTY_HINT" 'нужен непустой шаблон'
+              ;;
+            --file)
+              explicit_pattern=1
+              ;;
+          esac
+          i=$(( i + 1 ))
+        fi
+        ;;
+      -*)
+        case "$arg" in
+          *r*)
+            die "$REPLACE_HINT" 'рекурсия у rg по умолчанию: флаг не нужен'
+            ;;
+        esac
+        if [[ ${#arg} -eq 2 ]] && short_takes_value "${arg:1:1}"; then
+          case "${arg:1:1}" in
+            e|f) explicit_pattern=1 ;;
+          esac
+          if (( i < n )); then
+            [[ "${arg:1:1}" == e && -z "${args[i]}" ]] && die "$EMPTY_HINT" 'нужен непустой шаблон'
+            i=$(( i + 1 ))
+          fi
+        fi
+        ;;
+      *)
+        if (( ! have_pattern && ! explicit_pattern )); then
+          pattern="$arg"
+          have_pattern=1
+        fi
+        ;;
+    esac
+  done
+
+  if (( have_pattern )) && [[ -z "$pattern" ]]; then
+    die "$EMPTY_HINT" 'пустой шаблон в аргументах — вероятно, потерянный аргумент вызова'
+  fi
+}
+
+check_args "$@"
+
+real_rg="$(find_real_rg)" || die 'настоящий rg не найден' 'поставьте ripgrep (apt install ripgrep) или задайте PI_REAL_RG'
+
+exec "$real_rg" "$@"

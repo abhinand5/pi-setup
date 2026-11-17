@@ -45,6 +45,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 | Config examples | Safe `settings.example.json`, `mcp.example.json`, `micme.example.json`, `playwright-mcp.json`, and the `pi-pstack-adapter.json` role pinning; the settings example pins OpenRouter through the local xray proxy and gates delegation with `subagents.modelScope` |
 | Model cap check | `pi-models-check` probes every id in the delegation allow list against the provider, so a catalog entry is never mistaken for a served model |
 | Russian prose check | `ru-spellcheck` catches Latin homoglyphs inside Cyrillic words and dictionary misses in Russian text, so a flash-tier model's corrupted prose is caught before it is published |
+| Search guard | `rg` wrapper refuses `-r`/`--replace` (a substitution, not recursion) and an empty pattern, so a search cannot silently rewrite or flood the code an agent is reading |
 | Voice dictation | Micme wired to the local [Handy](https://handy.computer) CLI — `alt+m` to dictate, no cloud STT, no API key |
 | Browser automation | Playwright MCP server for interactive UAT on a private Xvfb display (no focus stealing), with a `browser-uat` skill and `uat.sh` environment CLI |
 | Themes | `nebula-pulse`, `opencode`, `tokyo-night`, `one-dark-pro`, and more |
@@ -66,6 +67,10 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - `max_tokens: 1` per id, key from the environment or `models.json`; prints 200/404 per model
   - turns "the catalog lists it" into "the provider answered", which is the only evidence that matters under a workspace guardrail
   - exit 1 on any 404, so it can gate a restore or a CI run
+- `bin/rg` — ripgrep wrapper that refuses two calls which look like a search and are not
+  - `-r`/`--replace` substitutes the match (`rg -rn 'x'` rewrites every match into `n`); rg recurses by default, so the flag is never needed. Exit 2 with the hint `-n` or `-l`
+  - an empty pattern matches every line — one such call put 18 829 lines into an agent's context. Exit 2
+  - everything else is passed through untouched; the real binary comes from `PI_REAL_RG`, `/usr/bin/rg`, or the rest of `PATH`
 - `extensions/` — versioned copies of custom Pi extensions
   - themed startup welcome card with `/welcome updates on|off`
   - `/context` usage breakdown for startup tokens, messages, and tool calls (scrollback output; not added to model context)
@@ -220,6 +225,7 @@ This installs:
 - compact launcher `bin/pi` into `~/.local/bin/pi`
 - `bin/pi-models-check` into `~/.local/bin/pi-models-check`
 - `bin/ru-spellcheck` into `~/.local/bin/ru-spellcheck`, plus the seed allow list into `~/.config/ru-spellcheck/allow.txt`
+- `bin/rg` into `~/.local/bin/rg`, which shadows `/usr/bin/rg` for every shell that has `~/.local/bin` first in `PATH`
 
 It also removes any legacy settings entry that points Pi at this repo as an active package.
 
