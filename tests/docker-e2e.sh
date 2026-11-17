@@ -100,6 +100,13 @@ echo "Remote:       $REMOTE"
 [[ -n "$BRANCH" ]] && echo "Branch:       $BRANCH" || echo "Branch:       remote default"
 echo "Container:    $CONTAINER"
 
+# The container script is one giant quoted argument. A stray quote inside it ends
+# the argument early: docker still runs the shortened script and still exits 0,
+# so every check after the break silently disappears. Capture the output and
+# assert the final marker, or a broken test looks like a passing one.
+E2E_LOG="$(mktemp -t pi-setup-e2e.XXXXXX)"
+trap 'rm -f "$E2E_LOG"' EXIT
+
 docker run --rm \
   --name "$CONTAINER" \
   -e PI_SETUP_REMOTE="$REMOTE" \
@@ -229,14 +236,17 @@ test -L /root/.local/bin/ru-spellcheck
 test -f /root/.config/ru-spellcheck/allow.txt
 # --homoglyph-only must work without python3-enchant: the container has none, and
 # a project venv shadowing python3 is the real-world failure this guards against.
-printf 'проверка лоkalной и нузен\n' > /tmp/ru-probe.txt
+# Double quotes only: this block lives inside the outer single-quoted `bash -lc`
+# string, and a stray single quote silently truncates the whole container script
+# while docker still exits 0.
+printf "%s\n" "проверка лоkalной и нузен" > /tmp/ru-probe.txt
 set +e
 /root/.local/bin/ru-spellcheck --homoglyph-only /tmp/ru-probe.txt > /tmp/ru-probe.out
 ru_rc=$?
 set -e
 test "$ru_rc" -eq 1
 grep -q HOMOGLYPH /tmp/ru-probe.out
-printf 'чистый русский текст\n' > /tmp/ru-clean.txt
+printf "%s\n" "чистый русский текст" > /tmp/ru-clean.txt
 /root/.local/bin/ru-spellcheck --homoglyph-only /tmp/ru-clean.txt
 echo "ru-spellcheck ok (homoglyph gate without enchant, clean text passes)"
 
@@ -286,4 +296,9 @@ test ! -e /root/.pi/agent/themes/nebula-pulse.json
 test ! -e /root/.pi/agent/playwright-mcp.json
 
 echo "remote clone pi-setup e2e passed"
-'
+' | tee "$E2E_LOG"
+
+grep -q "remote clone pi-setup e2e passed" "$E2E_LOG" || {
+  echo "error: the container script stopped before the final check (truncated quoting?)" >&2
+  exit 1
+}
