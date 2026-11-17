@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --check) CHECK_ONLY=1 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -39,7 +39,10 @@ PROMPT="$PI_HOME/npm/node_modules/pi-subagents/prompts/review-loop.md"
 # правка формулировки не плодила второй абзац.
 MARKER='A sibling worktree of this repository'
 
-BLOCK='Scope each reviewer to the directory it was given. A sibling worktree of this repository (`.claude/worktrees/<other name>`) holds another session'"'"'s uncommitted work: reviewers must not read it, quote it, or count it as part of the target diff. Passing `cwd` is not enough on its own — `git worktree list` invites the detour, and a reviewer that takes it reports another session'"'"'s dirty files as findings about the current diff.'
+# Путь к соседним воркдеревам намеренно не назван: у каждого репозитория он свой
+# (`.claude/worktrees/<имя>`, `../msb-calculator-api-wt/<имя>`), и конкретный путь живёт
+# в проектном `.pi/agents/reviewer.md`.
+BLOCK='Scope each reviewer to the directory it was given. A sibling worktree of this repository — wherever this checkout keeps them — holds another session'"'"'s uncommitted work: reviewers must not read it, quote it, or count it as part of the target diff. Passing `cwd` is not enough on its own — `git worktree list` invites the detour, and a reviewer that takes it reports another session'"'"'s dirty files as findings about the current diff.'
 
 # Абзац про запуск ревьюеров: вставка идёт сразу после него.
 ANCHOR='They must not rely on the main conversation history and must not edit files.'
