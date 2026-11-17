@@ -35,7 +35,7 @@
     "npm:@senad-d/micme",
     "npm:pi-pstack-adapter"
   ],
-  "defaultProvider": "openrouter",
+  "defaultProvider": "routerai",
   "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
   "defaultThinkingLevel": "high",
   "httpProxy": "http://127.0.0.1:10808",
@@ -61,80 +61,80 @@
     "+codemode"
   ],
   "subagents": {
-    "defaultModel": "openrouter/z-ai/glm-5.3-flash",
+    "defaultModel": "routerai/z-ai/glm-5.3-flash",
     "modelScope": {
       "enforce": true,
       "strict": false,
       "allow": [
-        "openrouter/deepseek/deepseek-v4-flash-vision-exp",
-        "openrouter/deepseek/deepseek-v4.1-flash",
-        "openrouter/deepseek/deepseek-v4.1-flash-1017",
-        "openrouter/z-ai/glm-4.7-flash",
-        "openrouter/z-ai/glm-5",
-        "openrouter/z-ai/glm-5.1",
-        "openrouter/z-ai/glm-5.2",
-        "openrouter/z-ai/glm-5.3",
-        "openrouter/z-ai/glm-5.3-flash",
-        "openrouter/inclusionai/ling-3.0-flash",
-        "openrouter/inclusionai/ling-3.0-flash-vl",
-        "openrouter/inclusionai/ling-3.1-flash",
-        "openrouter/minimax/minimax-m3",
-        "openrouter/minimax/minimax-m3.1-flash"
+        "routerai/deepseek/deepseek-v4-flash-vision-exp",
+        "routerai/deepseek/deepseek-v4.1-flash",
+        "routerai/deepseek/deepseek-v4.1-flash-1017",
+        "routerai/z-ai/glm-4.7-flash",
+        "routerai/z-ai/glm-5",
+        "routerai/z-ai/glm-5.1",
+        "routerai/z-ai/glm-5.2",
+        "routerai/z-ai/glm-5.3",
+        "routerai/z-ai/glm-5.3-flash",
+        "routerai/inclusionai/ling-3.0-flash",
+        "routerai/inclusionai/ling-3.0-flash-vl",
+        "routerai/inclusionai/ling-3.1-flash",
+        "routerai/minimax/minimax-m3",
+        "routerai/minimax/minimax-m3.1-flash"
       ],
       "agents": {
         "reviewer": {
           "allow": [
-            "openrouter/z-ai/glm-5.3-flash",
-            "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "openrouter/z-ai/glm-5.3"
+            "routerai/z-ai/glm-5.3-flash",
+            "routerai/deepseek/deepseek-v4.1-flash-1017",
+            "routerai/z-ai/glm-5.3"
           ]
         },
         "oracle": {
           "allow": [
-            "openrouter/z-ai/glm-5.3-flash",
-            "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "openrouter/z-ai/glm-5.3"
+            "routerai/z-ai/glm-5.3-flash",
+            "routerai/deepseek/deepseek-v4.1-flash-1017",
+            "routerai/z-ai/glm-5.3"
           ]
         },
         "evidence-auditor": {
           "allow": [
-            "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "openrouter/z-ai/glm-5.3-flash",
-            "openrouter/z-ai/glm-5.3"
+            "routerai/deepseek/deepseek-v4.1-flash-1017",
+            "routerai/z-ai/glm-5.3-flash",
+            "routerai/z-ai/glm-5.3"
           ]
         }
       }
     },
     "agentOverrides": {
       "scout": {
-        "model": "openrouter/z-ai/glm-5.3-flash",
+        "model": "routerai/z-ai/glm-5.3-flash",
         "thinking": "low"
       },
       "worker": {
-        "model": "openrouter/z-ai/glm-5.3-flash",
+        "model": "routerai/z-ai/glm-5.3-flash",
         "thinking": "medium"
       },
       "researcher": {
         "thinking": "low",
-        "model": "openrouter/z-ai/glm-5.3-flash"
+        "model": "routerai/z-ai/glm-5.3-flash"
       },
       "delegate": {
-        "model": "openrouter/z-ai/glm-5.3-flash"
+        "model": "routerai/z-ai/glm-5.3-flash"
       },
       "reviewer": {
-        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+        "model": "routerai/deepseek/deepseek-v4.1-flash-1017",
         "thinking": "medium"
       },
       "oracle": {
-        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+        "model": "routerai/deepseek/deepseek-v4.1-flash-1017",
         "thinking": "medium"
       },
       "evidence-auditor": {
-        "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+        "model": "routerai/deepseek/deepseek-v4.1-flash-1017",
         "thinking": "medium"
       },
       "uat-browser": {
-        "model": "openrouter/z-ai/glm-5.3-flash",
+        "model": "routerai/z-ai/glm-5.3-flash",
         "thinking": "high"
       }
     }
@@ -143,12 +143,12 @@
   "observational-memory": {
     "models": {
       "observer": {
-        "provider": "openrouter",
+        "provider": "routerai",
         "id": "deepseek/deepseek-v4.1-flash-1017",
         "thinking": "low"
       },
       "consolidator": {
-        "provider": "openrouter",
+        "provider": "routerai",
         "id": "deepseek/deepseek-v4.1-flash-1017",
         "thinking": "medium"
       }

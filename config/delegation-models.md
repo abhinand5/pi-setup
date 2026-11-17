@@ -6,9 +6,13 @@ has to be chosen, not on every session start.
 
 ## Allowed
 
-Only these ids, all on `openrouter/`. Prices below are the OpenRouter list, read from
-`GET https://openrouter.ai/api/v1/models` on 2026-11-16; the cap is provider-side, so a model in
-the local catalog is not evidence it works.
+**Provider is `routerai` (`https://routerai.ru/`) since 2026-11-17.** Every default in
+`settings.json` and `pi-pstack-adapter.json` carries the `routerai/` prefix; `openrouter/` is no
+longer default and its ids are blocked by policy.
+
+Only these ids, on `routerai/`. The table below is the **OpenRouter list read on 2026-11-16** and is
+kept as history — it explains why these 14 ids were chosen under the workspace cap. It is **not**
+the routerai price list; the routerai figures are in the next section.
 
 | id | in | **cache read** | out | role |
 | --- | --- | --- | --- | --- |
@@ -28,6 +32,40 @@ the local catalog is not evidence it works.
 | `inclusionai/ling-3.0-flash-vl` | 0.060 | 0.012 (20%) | 0.18 | vision fallback |
 
 ### Rank by cache read, not by input
+
+### routerai prices, read 2026-11-17
+
+`GET https://routerai.ru/api/v1/models` returns `pricing` **per token**; multiply by 1e6 for
+$/Mtok. Values below are that endpoint, rounded to 3 decimals.
+
+| id | in | **cache read** | out | cache/input |
+| --- | --- | --- | --- | --- |
+| `inclusionai/ling-3.0-flash` | 2.253 | **0.451** | 6.758 | 20% |
+| `deepseek/deepseek-v4.1-flash` | 16.519 | **0.496** | 49.558 | 3% |
+| `deepseek/deepseek-v4-flash-vision-exp` | 23.127 | **0.736** | 69.381 | 3% |
+| `minimax/minimax-m3.1-flash` | 8.045 | **0.805** | 32.181 | 10% |
+| `deepseek/deepseek-v4.1-flash-1017` | 4.720 | **0.826** | 8.260 | 17.5% |
+| `inclusionai/ling-3.1-flash` | 4.827 | **0.965** | 14.481 | 20% |
+| `inclusionai/ling-3.0-flash-vl` | 6.758 | **1.352** | 20.274 | 20% |
+| `z-ai/glm-5.3-flash` | 4.708 | **3.540** | 9.251 | 75% |
+| `minimax/minimax-m3` | 24.672 | **5.363** | 102.978 | 22% |
+| `z-ai/glm-5.3` | 7.498 | **7.391** | 150.176 | 98.6% |
+| `z-ai/glm-5.1` | 96.542 | **9.654** | 311.079 | 10% |
+| `z-ai/glm-5.2` | 60.339 | **11.263** | 193.083 | 19% |
+| `z-ai/glm-5` | 64.361 | **12.872** | 205.956 | 20% |
+| `z-ai/glm-4.7-flash` | 6.490 | — | 42.907 | none |
+
+Consequences that differ from the OpenRouter arithmetic below:
+
+- The cache discount on routerai is **5.7x** for `deepseek-v4.1-flash-1017`, not 50x, so "deepseek
+  is cheap because of caching" no longer carries on its own — it is cheap because input is 4.72 and
+  output 8.26, and it still wins on both against `glm-5.3` (7.50 / 150.18).
+- `glm-5.3` cache read is 98.6% of input, so caching buys nothing there; that part of the analysis
+  still holds.
+- `minimax-m3` (24.67 / 102.98) and `glm-5.2` (60.34 / 193.08) are still the expensive seats; keep
+  them to one judge or one cross-judge seat.
+
+### OpenRouter arithmetic (historical, 2026-11-11..16)
 
 An agent loop re-sends its whole context every turn: measured over 2026-11-11..16, **97-99% of all
 prompt tokens were cache reads**, and prompt cost was 64-83% of the bill. So the price that decides
@@ -52,8 +90,16 @@ model cost on DeepInfra ($0.0040 vs $0.00077 per call). Pin `DeepInfra` when the
 
 ## Re-verify before trusting
 
-The table is a dated observation, not a standing fact. Run `pi-models-check` (one `max_tokens: 1`
-request per id, exit 1 on 404) after a provider or guardrail change. A 404 there is the cap, not
-local config.
+The table is a dated observation, not a standing fact. Re-verify after any provider or price
+change: read `GET https://routerai.ru/api/v1/models` and send one `max_tokens: 1` request per id.
+A 404 is the provider, not local config. (`pi-models-check` no longer exists on this machine.)
+
+```bash
+for m in z-ai/glm-5.3-flash deepseek/deepseek-v4.1-flash-1017; do
+  curl -s -o /dev/null -w "$m %{http_code}\n" https://routerai.ru/api/v1/chat/completions \
+    -H "Authorization: Bearer $ROUTERAI_API_KEY" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$m\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+done
+```
 
 @see `~/.pi/agent/AGENTS.md` → Delegation model policy (blocked ids, enforcement, rules)
