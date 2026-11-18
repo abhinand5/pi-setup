@@ -486,6 +486,20 @@ through `install.sh`:
 ./patches/pi-subagents-review-loop-scope.sh             # apply
 ```
 
+### `/review-loop`: the diff is taken against `origin/<base>`
+
+`patches/pi-subagents-review-loop-origin-base.sh` adds one paragraph to the same packaged prompt: the
+artifact under review is taken against `origin/<base>`, not the local base branch, with an explicit
+fallback for a repository whose base has no remote-tracking ref. A local branch lags silently: on
+2026-11-17 a review of #15702 was taken against a local `main` two commits behind `origin/main`, the
+artifact included an unrelated #175 fix and the 0.28.8 release files, and both reviewers spent a P1 on
+it (#15733 п.2). The block is idempotent and survives `pi update --extensions` through `install.sh`:
+
+```bash
+./patches/pi-subagents-review-loop-origin-base.sh --check     # exit 1 if the paragraph is missing
+./patches/pi-subagents-review-loop-origin-base.sh             # apply
+```
+
 ## Voice dictation (Handy + Micme)
 
 `alt+m` toggles dictation inside Pi. Audio is recorded with `ffmpeg`, transcribed by the local [Handy](https://handy.computer) CLI, and appended to the focused editor for review — no cloud STT, no API key.
