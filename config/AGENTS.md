@@ -77,6 +77,14 @@ One hard gate, in user config; do not weaken it without the user asking.
 - When a delegation fails on its model, report the failure and name the model or role. Do not
   silently substitute another model.
 
+# Глобальные скиллы и агенты: источник — pi-setup
+
+Глобальные скиллы, агенты и этот файл версионируются в `~/p/pi-setup` (`skills/`, `config/AGENTS.md`,
+`extensions/`, `themes/`), доставка — PR в `denis-trofimov/pi-setup` (`main` защищён, мерж только
+через PR). `~/.pi/agent` — рабочая копия: `./sync.sh` снимает её изменения в репозиторий,
+`./install.sh --restore` раскладывает репозиторий обратно. Правка, сделанная только в `~/.pi/agent`,
+на другой машине не появится, пока не попадёт в pi-setup.
+
 # GitHub: авторство артефактов
 
 `GITHUB_TOKEN` в окружении — ключ разработчика для composer, не личная учётная запись. `gh` на
