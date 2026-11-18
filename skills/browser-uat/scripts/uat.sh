@@ -20,7 +20,9 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WRAPPER="$SCRIPT_DIR/playwright-mcp-xvfb.sh"
 PI_HOME="${PI_HOME:-$HOME/.pi/agent}"
 MCP_JSON="$PI_HOME/mcp.json"
-BASE_CONFIG="$PI_HOME/playwright-mcp.json"
+# UAT_PLAYWRIGHT_CONFIG is the wrapper's documented override; login reads the same file,
+# otherwise a user who moved the base config gets two different routes again (#15799 п.1).
+BASE_CONFIG="${UAT_PLAYWRIGHT_CONFIG:-$PI_HOME/playwright-mcp.json}"
 ARTIFACTS="${UAT_ARTIFACTS:-${TMPDIR:-/tmp}/browser-uat}"
 SCREEN="${UAT_SCREEN:-1920x1080x24}"
 # Saved logins: one storage state per profile. Deliberately OUTSIDE skills/: a
@@ -474,7 +476,8 @@ cmd_artifacts() {
 # resulting storage state is what the MCP server loads on the next start.
 cmd_login() {
   local profile="default" env_file="" url="" phone_var="ADMIN_PHONE_NUMBER" code_var="ADMIN_PHONE_CODE" \
-        phone_field="" code_field="" send_selector="" submit_selector="" success_frag="" state="" timeout="" dry=0
+        phone_field="" code_field="" send_selector="" submit_selector="" success_frag="" state="" timeout="" dry=0 \
+        proxy_server="" proxy_bypass="" no_proxy=0 keep_host=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --profile) profile="${2:?--profile needs a name}"; shift 2 ;;
@@ -489,7 +492,10 @@ cmd_login() {
       --success) success_frag="${2:?--success needs a URL fragment}"; shift 2 ;;
       --state) state="${2:?--state needs a path}"; shift 2 ;;
       --timeout) timeout="${2:?--timeout needs milliseconds}"; shift 2 ;;
-      --dry-run) dry=1; shift ;;
+      --proxy-server) proxy_server="${2:?--proxy-server needs a URL}"; shift 2 ;;
+      --no-proxy) no_proxy=1; shift ;;
+      --keep-host) keep_host=1; shift ;;
+      --dry-run) dry=1; shift ;;   # dry run: resolve URL and proxy, do not touch the browser
       -h|--help)
         cat <<'EOF'
 
@@ -507,7 +513,26 @@ uat.sh login — log in on the server side and save the browser state
   --success FRAGMENT      URL fragment meaning "logged in", default /admin
   --state PATH            write the state here instead of the profile path
   --timeout MS            per-step timeout, default 20000 (env UAT_LOGIN_TIMEOUT)
+  --proxy-server URL      proxy for the login browser; default is the one in the base
+                          config ($BASE_CONFIG → browser.contextOptions.proxy, and
+                          UAT_PLAYWRIGHT_CONFIG moves that file, as for the wrapper)
+  --no-proxy              start the browser with --no-proxy-server even when the base
+                          config names a proxy: that flag is the only way to pin the
+                          direct route, otherwise Chromium may take a proxy from the
+                          system settings
+  --keep-host             keep the URL host as given (default: 127.0.0.1 → localhost)
   --dry-run               check everything, do not touch the browser
+
+  Proxy: the MCP browser reaches the stand through the proxy in the base config,
+  while this command starts a browser of its own — the two can end up on
+  different routes, which is what timed the login out in #15799 п.1. The same
+  proxy is used here, so login and MCP take one route. Chromium has no "direct"
+  mode of its own: --no-proxy is passed to it as --no-proxy-server.
+
+  Host: the saved storage state is domain-scoped, so a login made on 127.0.0.1 is a
+  guest in a browser that opens localhost. The loopback host is rewritten to
+  localhost by default; --keep-host leaves it alone and the cookie domains are
+  printed after the login.
 
   State goes to $PI_HOME/uat-auth/<profile>.json (mode 600, outside skills/ so a
   restore does not delete it). The last login also becomes current.json — that is
@@ -527,6 +552,32 @@ EOF
   [[ -f "$env_file" ]] || die "login: no credentials file at $env_file — pass --env or set UAT_LOGIN_ENV"
   command -v node >/dev/null 2>&1 || die "login: node not found in PATH"
 
+  # Domain-scoped cookies: a state file written on 127.0.0.1 is a guest in a browser
+  # that opens localhost, and the project skills already name http://localhost/...
+  # so the loopback address is rewritten instead of leaving a silent mismatch.
+  if [[ "$keep_host" -eq 0 && "$url" =~ ^https?://(127\.0\.0\.1|\[::1\])([:/]|$) ]]; then
+    local loopback="${BASH_REMATCH[1]}"
+    url="$(printf '%s' "$url" | sed -E 's#^(https?://)(127\.0\.0\.1|\[::1\])#\1localhost#')"
+    printf 'login: host %s → localhost (cookies are domain-scoped; --keep-host keeps it)\n' "$loopback"
+  fi
+
+  # One source of truth with the MCP wrapper: the same base config it reads.
+  if [[ "$no_proxy" -eq 0 ]]; then
+    if [[ -f "$BASE_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+      [[ -n "$proxy_server" ]] \
+        || proxy_server="$(jq -r '.browser.contextOptions.proxy.server // empty' "$BASE_CONFIG" 2>/dev/null || true)"
+      proxy_bypass="$(jq -r '.browser.contextOptions.proxy.bypass // empty' "$BASE_CONFIG" 2>/dev/null || true)"
+    elif [[ -f "$BASE_CONFIG" && -z "$proxy_server" ]]; then
+      # Silent here would be the original defect again: the wrapper passes the config
+      # through without jq, so the MCP browser takes the proxy while the login goes direct.
+      # With --proxy-server the route is known, and the warning would be a lie.
+      printf 'login: jq не найден — прокси из %s не прочитан, вход пойдёт напрямую\n' "$BASE_CONFIG" >&2
+    fi
+  else
+    proxy_server=""
+    proxy_bypass=""
+  fi
+
   # `|| true`: with set -o pipefail a missing variable makes grep fail the whole
   # pipeline, and the assignment would abort the script before the message below.
   # `tr -d '\r'`: a .env edited on Windows would otherwise leave a CR in the value.
@@ -537,6 +588,18 @@ EOF
   [[ -n "$code" ]] || die "login: $code_var is empty or missing in $env_file"
 
   printf 'login: profile %s, credentials %s/%s from %s\n' "$profile" "$phone_var" "$code_var" "$env_file"
+  printf 'login: url %s\n' "$url"
+  if [[ -n "$proxy_server" ]]; then
+    # Playwright accepts userinfo in the proxy URL; printing it verbatim would put the
+    # password into the transcript, which is the one thing this command exists to avoid.
+    local shown_proxy
+    shown_proxy="$(printf '%s' "$proxy_server" | sed -E 's#//[^/@]*@#//***@#')"
+    printf 'login: proxy %s%s\n' "$shown_proxy" "${proxy_bypass:+ (bypass: $proxy_bypass)}"
+  elif [[ "$no_proxy" -eq 1 ]]; then
+    printf 'login: proxy none — the browser is started with --no-proxy-server\n'
+  else
+    printf 'login: proxy none — direct connection\n'
+  fi
   printf 'login: state will be written to %s\n' "$state"
   if [[ "$dry" -eq 1 ]]; then
     printf 'login: dry run — browser not started\n'
@@ -554,12 +617,22 @@ EOF
   UAT_LOGIN_SUBMIT_SELECTOR="$submit_selector" \
   UAT_LOGIN_SUCCESS="$success_frag" \
   UAT_LOGIN_TIMEOUT="$timeout" \
+  UAT_LOGIN_PROXY_SERVER="$proxy_server" \
+  UAT_LOGIN_PROXY_BYPASS="$proxy_bypass" \
+  UAT_LOGIN_NO_PROXY="$no_proxy" \
   UAT_PLAYWRIGHT_ROOT="${UAT_PLAYWRIGHT_ROOT:-}" \
     node "$SCRIPT_DIR/uat-login.mjs"
 
   # The wrapper loads current.json, so any profile works without extra env.
   mkdir -p "$AUTH_DIR" && chmod 700 "$AUTH_DIR"
   cp "$state" "$CURRENT_STATE" && chmod 600 "$CURRENT_STATE"
+  if command -v jq >/dev/null 2>&1; then
+    local domains
+    domains="$(jq -r '[.cookies[].domain] | unique | join(", ")' "$state" 2>/dev/null || true)"
+    if [[ -n "$domains" ]]; then
+      printf 'login: cookies saved for %s — open the same host in the MCP browser\n' "$domains"
+    fi
+  fi
   printf 'login: profile %s is now the current one (%s)\n' "$profile" "$CURRENT_STATE"
   printf 'login: done — restart the MCP server to use the saved session:\n'
   printf '  mcp({ connect: "playwright" })   # agent-side, no user needed; fallback: /reload in pi\n'

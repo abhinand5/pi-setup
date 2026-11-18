@@ -23,6 +23,10 @@
 //   UAT_LOGIN_SUBMIT_SELECTOR submit button, default button[type=submit]
 //   UAT_LOGIN_SUCCESS         URL fragment that means "logged in", default /admin
 //   UAT_LOGIN_TIMEOUT         step timeout in ms, default 20000
+//   UAT_LOGIN_PROXY_SERVER    proxy for the login browser (optional)
+//   UAT_LOGIN_PROXY_BYPASS    proxy bypass list, comma-separated (optional)
+//   UAT_LOGIN_NO_PROXY        1 — start the browser with --no-proxy-server, so the
+//                             session's HTTP_PROXY is not used even for the loopback
 //   UAT_PLAYWRIGHT_ROOT       directory containing the `playwright` package
 //                             (default: `npm root -g`)
 //
@@ -46,6 +50,16 @@ const codeField = env.UAT_LOGIN_CODE_FIELD || '[name="LoginForm[code]"]';
 const sendSelector = env.UAT_LOGIN_SEND_SELECTOR || '';
 const submitSelector = env.UAT_LOGIN_SUBMIT_SELECTOR || 'button[type=submit]';
 const success = env.UAT_LOGIN_SUCCESS || '/admin';
+// The MCP browser reaches the stand through the proxy in the base config, while this script
+// starts a browser of its own — so the login can end up on a different route, which is what made
+// page.goto time out in #15799 п.1. Passing the same proxy keeps one route; --no-proxy-server is
+// the only way to guarantee a direct one, because otherwise Chromium may take a proxy from the
+// system settings.
+const proxyServer = env.UAT_LOGIN_PROXY_SERVER || '';
+const proxyBypass = env.UAT_LOGIN_PROXY_BYPASS || '';
+// Chromium has no "direct" switch of its own: --no-proxy-server is the only way to pin the
+// direct route, so it is passed explicitly instead of relying on the environment.
+const noProxy = env.UAT_LOGIN_NO_PROXY === '1';
 
 // "Under --success" is not enough on its own: with the default /admin the login
 // page itself is /admin/login/index, so a rejected code would look like a
@@ -100,7 +114,13 @@ const stateDir = dirname(stateFile);
 
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    ...(noProxy ? { args: ['--no-proxy-server'] } : {}),
+    ...(proxyServer && !noProxy
+      ? { proxy: proxyBypass ? { server: proxyServer, bypass: proxyBypass } : { server: proxyServer } }
+      : {}),
+  });
 } catch (error) {
   console.error('uat-login: не удалось запустить Chromium — поставь браузер: npx playwright install chromium');
   console.error('uat-login: ' + String(error).split('\n')[0]);
@@ -167,6 +187,14 @@ try {
   await context.close();
 } catch (error) {
   console.error('uat-login: ' + String(error).split('\n')[0]);
+  // The measured failure of #15799 п.1: a session proxy with no proxy on the browser times out on
+  // the loopback. Name it instead of leaving a bare TimeoutError.
+  if (!proxyServer && !noProxy && (env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy)) {
+    console.error(
+      'uat-login: в окружении выставлен прокси, а браузер пошёл без него — задай прокси из'
+        + ' playwright-mcp.json (uat.sh login берёт его сам) или UAT_LOGIN_PROXY_SERVER'
+    );
+  }
   process.exitCode = 1;
 } finally {
   // close() runs even on the error path: a bare process.exit() here would leave

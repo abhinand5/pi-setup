@@ -60,11 +60,12 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - preserves Pi's native themed header and loaded skills/extensions/themes listing
 - `bin/ru-spellcheck` — deterministic Russian prose checker (homoglyphs + hunspell `ru_RU`)
   - `--homoglyph-only` flags Latin letters inside Cyrillic words (`лоkalной`, `восстанóвленное`, `обéих`) with no dictionary and no false positives; the full run also reports words missing from `ru_RU` with suggestions
+  - the gate is meant for short prose: an input longer than 40 lines or 500 tokens exits 3 and asks for the full run, because vowel reduction (`сесии`, `велечину`, `скрыпт`) is invisible without the dictionary; `--allow-long` bypasses that on purpose (#15799 п.2)
   - code spans, fenced blocks, URLs, paths, and filenames are masked, so identifiers are never flagged
   - `--add СЛОВО` inside a repository grows that repository's own `.ru-spellcheck-allow` (committed with the code, found upwards from the checked file, applied on top of the personal list); `--add-personal` keeps the machine-wide `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`, which the repo ships as a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
-  - `tests/ru-spellcheck-repo-dict.sh` checks the project dictionary and both `--add` targets on a throwaway repository
+  - `tests/ru-spellcheck-repo-dict.sh` checks the project dictionary and both `--add` targets on a throwaway repository; `tests/ru-spellcheck-long-input.sh` checks the long-input refusal (exit 3), the short-text gate and `--allow-long`
   - needs `python3-enchant` and `hunspell-ru` for the full run; `--homoglyph-only` needs neither, so it also works under a project venv that shadows `python3`
-  - exit 1 on findings, so it can gate a publish step
+  - exit 1 on findings, so it can gate a publish step; exit 3 is the "input too long for the homoglyph gate" refusal
 - `bin/pi-models-check` — probes `subagents.modelScope.allow` against the provider
   - `max_tokens: 1` per id, key from the environment or `models.json`; prints 200/404 per model
   - turns "the catalog lists it" into "the provider answered", which is the only evidence that matters under a workspace guardrail
@@ -605,6 +606,27 @@ The browser itself is driven with `mcp__playwright__*` tools, not from the
 script. The `browser-uat` skill carries the operating procedure: build a QA
 inventory first, act from `browser_snapshot` refs, verify with console/network
 evidence, and screenshot anything visual.
+
+### Logging in without putting credentials in the chat
+
+`uat.sh login` reads the phone and the one-time code from the project's `.env`,
+drives the sign-in form in a headless browser, and saves the Playwright storage
+state the MCP server loads on its next start. Two things it gets right by default:
+
+- **Proxy** — taken from `browser.contextOptions.proxy` in
+  `~/.pi/agent/playwright-mcp.json` (or `UAT_PLAYWRIGHT_CONFIG`), the same file the
+  MCP wrapper reads. The login starts a browser of its own, so the two can end up
+  on different routes — that is what timed the sign-in page out in #15799 п.1.
+  `--proxy-server URL` overrides the server; `--no-proxy` passes
+  `--no-proxy-server`, which is the only way to pin the direct route, because
+  otherwise Chromium may take a proxy from the system settings.
+- **Host** — the saved state is domain-scoped, so a login made on `127.0.0.1` is
+  a guest in a browser that opens `localhost`. The loopback host is rewritten to
+  `localhost` (the port is kept) and the cookie domains are printed after the
+  login; `--keep-host` leaves the URL alone.
+
+`tests/browser-uat-login-proxy.sh` checks the resolved values on `--dry-run` and the options
+`chromium.launch()` actually receives, through a stub Playwright package — no browser, no network.
 
 Two sharp edges are worth repeating:
 

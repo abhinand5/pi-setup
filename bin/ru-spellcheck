@@ -8,7 +8,9 @@ Catches the failure class seen on 2026-11-16 in msb-lk sessions:
 Usage:
   ru-spellcheck FILE...           check files (Markdown/Textile/plain)
   cmd | ru-spellcheck -           check stdin
-  ru-spellcheck --homoglyph-only F   only the hard error class (exit 1 on hit)
+  ru-spellcheck --homoglyph-only F   only the hard error class (exit 1 on hit); an input longer
+                                     than 40 lines / 500 tokens exits 3 — see "Gate" below
+  ru-spellcheck --allow-long F    keep --homoglyph-only on a long input (deliberate bypass)
   ru-spellcheck --add СЛОВО       add a known-good word to the project's allowlist
   ru-spellcheck --add-personal СЛОВО  add it to the personal allowlist instead
   ru-spellcheck --json FILE...    machine-readable
@@ -20,7 +22,18 @@ Allowlists, applied on top of hunspell:
     agent and the CI see the same vocabulary. Files are searched upwards from the checked
     file (or the cwd for stdin) up to the git root; the personal file still applies.
 
-Exit: 0 clean, 1 findings, 2 usage/dictionary problem.
+Gate: `--homoglyph-only` is the gate for short prose (a chat message, a Redmine note, a commit
+body): zero false positives, exit 1 on a hit. It sees only script mixing, so a long document —
+a hand-off note, a README, a task description — passes it while losing its vowels (сесии,
+велечину, скрыпт), and that class needs the dictionary. A long input is therefore refused with
+exit 3 and a hint to run the full check, rather than reported clean (#15799 п.2). The threshold
+is 40 lines or 500 tokens, whichever comes first, counted over all inputs together — a token is
+what the checker splits on (whitespace and punctuation, code and paths included), so the count runs
+ahead of `wc -w` on prose with dashes and commas; `--allow-long` bypasses it on purpose. The refusal is checked
+before any output, so `--json --homoglyph-only` on a long input also gives exit 3 and an empty
+stdout rather than a partial report.
+
+Exit: 0 clean, 1 findings, 2 usage/dictionary problem, 3 --homoglyph-only on a long input.
 Masked as non-prose: fenced code, `inline code`, URLs, HTML tags, paths, versions,
 Latin tokens, and hyphen compounds whose parts are each pure-script (Redmine-задачи).
 """
@@ -33,6 +46,10 @@ CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config
 ALLOW = os.path.join(CONFIG_HOME, "ru-spellcheck", "allow.txt")
 REPO_ALLOW_NAME = ".ru-spellcheck-allow"
 BASELINE = os.path.join(CONFIG_HOME, "ru-spellcheck", "baseline.txt")
+# Short-prose threshold for --homoglyph-only: past it the gate cannot see the error class it is
+# asked to catch, so it refuses the input instead of reporting it clean (#15799 п.2).
+MAX_SHORT_LINES = 40
+MAX_SHORT_WORDS = 500
 WORD = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]+")
 
 MASK_PATTERNS = [
@@ -291,16 +308,44 @@ def main(argv):
         return 0
     as_json = "--json" in argv
     homoglyph_only = "--homoglyph-only" in argv
+    allow_long = "--allow-long" in argv
     no_baseline = "--no-baseline" in argv
     baseline_path = None  # opt-in only: a model-output baseline also hides real errors
     for i, a in enumerate(argv):
         if a == "--baseline" and i + 1 < len(argv):
             baseline_path = argv[i + 1]
-    skip = {"--json", "--homoglyph-only", "--no-baseline", "--baseline"}
+    skip = {"--json", "--homoglyph-only", "--allow-long", "--no-baseline", "--baseline"}
     paths = [a for a in argv if not a.startswith("--") and a != baseline_path]
     paths = [a for a in paths if a not in skip]
     if not paths:
         return 2
+    inputs = []
+    if paths == ["-"]:
+        inputs.append(("<stdin>", sys.stdin.read()))
+    else:
+        for p in paths:
+            try:
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    inputs.append((p, fh.read()))
+            except (OSError, IsADirectoryError) as exc:
+                print(f"ru-spellcheck: {p}: {exc}", file=sys.stderr)
+                return 2
+    # Refused, not reported clean: the long-text error class is invisible to this gate.
+    if homoglyph_only and not allow_long:
+        lines = sum(len(text.splitlines()) for _, text in inputs)
+        words = sum(len(TOKEN.findall(text)) for _, text in inputs)
+        if lines > MAX_SHORT_LINES or words > MAX_SHORT_WORDS:
+            print(
+                f"ru-spellcheck: --homoglyph-only видит только латинские гомоглифы, а вход — {lines} строк"
+                f" / {words} токенов: редукция гласных так не ловится",
+                file=sys.stderr,
+            )
+            print(
+                "ru-spellcheck: длинный текст проверяй полным прогоном — ru-spellcheck ФАЙЛ,"
+                " находки разбирать руками; --allow-long — осознанный обход",
+                file=sys.stderr,
+            )
+            return 3
     if homoglyph_only:
         d, allow, stems = None, set(), []  # script-mixing needs no dictionary at all
     else:
@@ -310,16 +355,8 @@ def main(argv):
         stems = load_stems()
     baseline = load_baseline(baseline_path)  # opt-in: --baseline PATH
     results = []
-    if paths == ["-"]:
-        results += check_text(sys.stdin.read(), d, allow, "<stdin>", homoglyph_only, baseline, stems)
-    else:
-        for p in paths:
-            try:
-                with open(p, encoding="utf-8", errors="replace") as fh:
-                    results += check_text(fh.read(), d, allow, p, homoglyph_only, baseline, stems)
-            except (OSError, IsADirectoryError) as exc:
-                print(f"ru-spellcheck: {p}: {exc}", file=sys.stderr)
-                return 2
+    for path, text in inputs:
+        results += check_text(text, d, allow, path, homoglyph_only, baseline, stems)
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=1))
     else:
