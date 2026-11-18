@@ -594,7 +594,7 @@ cd "$ROOT"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt"
+  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/session-logs.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt"
   exit 0
 fi
 
@@ -618,6 +618,11 @@ if [[ -f "$PI_HOME/AGENTS.md" ]]; then
 fi
 if [[ -f "$PI_HOME/docs/delegation-models.md" ]]; then
   cp "$PI_HOME/docs/delegation-models.md" "$ROOT/config/delegation-models.md"
+fi
+# Session-log recipes: the retro skill points at this page, so it ships with the
+# skills that read it instead of staying on one machine (#15807).
+if [[ -f "$PI_HOME/docs/session-logs.md" ]]; then
+  cp "$PI_HOME/docs/session-logs.md" "$ROOT/config/session-logs.md"
 fi
 # ru-spellcheck grows the machine-wide allow list through `--add-personal` (inside a repository
 # `--add` writes that repository's own .ru-spellcheck-allow instead, which is committed there); the

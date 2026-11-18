@@ -12,7 +12,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 2. Read the primary sources for the session the user specifies. If the user doesn't specify a session, default to the current one (it is already in context).
 
-   Session logs live in `~/.pi/agent/sessions/<project-slug>/<timestamp>_<uuid>.jsonl` (one JSONL file per session; subagent artifacts in `…/subagent-artifacts/`). Find a past session by project and time, then read it page by page — never in one call:
+   Session logs live in `~/.pi/agent/sessions/<project-slug>/<timestamp>_<uuid>.jsonl` (one JSONL file per session; subagent artifacts in `…/subagent-artifacts/`). Find a past session by project and time, then read it page by page — never in one call. Ready-made recipes for "what did it do", "which tools did it call" and "when did it stop" live in `~/.pi/agent/docs/session-logs.md`; use them instead of writing a new script per question:
 
    ```bash
    rg -l '<phrase from this conversation>' ~/.pi/agent/sessions/<slug>/   # the current session

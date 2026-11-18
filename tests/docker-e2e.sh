@@ -227,6 +227,12 @@ jq -e --slurpfile s /root/.pi/agent/settings.json "[.models[] | split(\" \")[] |
 test "$(grep -cE '\''^\| `[^`]+/[^`]+`'\'' /root/.pi/agent/docs/delegation-models.md)" -eq 14
 grep -qi "model cap" /root/.pi/agent/AGENTS.md
 grep -q "docs/delegation-models.md" /root/.pi/agent/AGENTS.md
+# Session-log recipes ship with the skills that point at them: the page must be
+# restored and AGENTS.md must name it, otherwise the retro skill points nowhere
+# (#15807).
+test -f /root/.pi/agent/docs/session-logs.md
+grep -q "docs/session-logs.md" /root/.pi/agent/AGENTS.md
+grep -q "docs/session-logs.md" /root/.pi/agent/skills/retro/SKILL.md
 test -L /root/.local/bin/pi-models-check
 test "$(/root/.local/bin/pi-models-check --list | wc -l)" -eq 14
 echo "model cap ok (14 ids, adapter roles inside the allow list, delegation-models table matches)"

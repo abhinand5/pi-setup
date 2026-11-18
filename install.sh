@@ -283,7 +283,7 @@ make_backup() {
   # Policy files that --restore may overwrite: AGENTS.md and the allowed-model
   # table it points at. The table is overwritten unconditionally (a stale table
   # loses delegation runs), so a local edit has to be revertible (#15647).
-  for name in AGENTS.md docs/delegation-models.md; do
+  for name in AGENTS.md docs/delegation-models.md docs/session-logs.md; do
     if [[ -f "$PI_HOME/$name" ]]; then
       mkdir -p "$BACKUP_DIR/$(dirname "$name")"
       cp "$PI_HOME/$name" "$BACKUP_DIR/$name"
@@ -320,7 +320,7 @@ revert_backup() {
       echo "Backup has no $name/ state; leaving $PI_HOME/$name unchanged."
     fi
   done
-  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json AGENTS.md docs/delegation-models.md; do
+  for name in settings.json mcp.json playwright-mcp.json models.json pi-pstack-adapter.json AGENTS.md docs/delegation-models.md docs/session-logs.md; do
     if [[ -f "$backup/$name" ]]; then
       copy_path "$backup/$name" "$PI_HOME/$name"
     elif [[ -f "$backup/.absent-$(basename "$name")" ]]; then
@@ -533,6 +533,13 @@ if [[ "$RESTORE" == "1" ]]; then
     copy_path "$ROOT/config/delegation-models.md" "$PI_HOME/docs/delegation-models.md"
   else
     echo "warning: $ROOT/config/delegation-models.md is missing — the allowed-model table was not restored"
+  fi
+  # Recipes for reading session logs; the retro skill points at this page, and a
+  # skill that points nowhere is worse than no pointer (#15807).
+  if [[ -f "$ROOT/config/session-logs.md" ]]; then
+    copy_path "$ROOT/config/session-logs.md" "$PI_HOME/docs/session-logs.md"
+  else
+    echo "warning: $ROOT/config/session-logs.md is missing — the session-log recipes were not restored"
   fi
   # The table is useless if nothing points at it: AGENTS.md is restored only when
   # absent, so an older live copy may have no pointer.
