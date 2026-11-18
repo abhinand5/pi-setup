@@ -15,10 +15,19 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
    Session logs live in `~/.pi/agent/sessions/<project-slug>/<timestamp>_<uuid>.jsonl` (one JSONL file per session; subagent artifacts in `…/subagent-artifacts/`). Find a past session by project and time, then read it page by page — never in one call:
 
    ```bash
-   ls -t ~/.pi/agent/sessions/*/  | head        # newest sessions across projects
-   rg -l '15620' ~/.pi/agent/sessions/<slug>/   # which session mentions the task
-   rg -c '' ~/.pi/agent/sessions/<slug>/<file>.jsonl   # size in lines before reading
+   rg -l '<phrase from this conversation>' ~/.pi/agent/sessions/<slug>/   # the current session
+   ls ~/.pi/agent/sessions/<slug>/                                      # sessions of this project
+   wc -l ~/.pi/agent/sessions/<slug>/<file>.jsonl                       # size before reading
    ```
+
+   **`ls -t` does not identify the current session.** Every file gets the same mtime when the tree is
+   copied or restored, so the newest-first order names an arbitrary log and the retro then measures
+   someone else's session. An anchor does identify it: a phrase that only this conversation contains,
+   usually the issue number plus a wording from the user's own message. Confirm with `session.id` from
+   the environment before treating the file as this session's log.
+
+   **Counting lines is `wc -l`, not `rg -c ''`.** The `rg` wrapper in `bin/rg` refuses an empty pattern
+   (it reads as a no-op shell expansion), and the refusal is easy to mistake for an empty file.
 
 3. Look for candidates for improvement in these categories.
 

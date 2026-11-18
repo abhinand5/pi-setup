@@ -5,13 +5,16 @@ description: >-
   https://redmine.msb-leasing.ru for msb-lk work. Use when the user mentions Redmine,
   redmine-cli, ticket, issue, задача, тикет, time entry, wiki, tags/теги
   (redmineup_tags / tag_list), Textile/описание, Internal error / 500 на
-  странице issue, or asks to list/create/update/close/search issues, log time,
-  or fetch attachments from Redmine (including #11301 / schedule form QA).
+  странице issue, or asks to list/create/update/close/search issues, read the
+  journal and notes (`--journals`), relations, children, log time, or fetch
+  attachments from Redmine (including #11301 / schedule form QA).
 ---
 
 # Redmine CLI (msb-lk → redmine.msb-leasing.ru)
 
 Project skill for **msb-lk**. Binary: `~/.local/bin/redmine` (v2.x). Server: `https://redmine.msb-leasing.ru`.
+
+**Канон — этот файл** (возвращён в репозиторий после `15653cb8c4`, тело приведено к актуальному CLI v2.11.0 по внешней копии pi-агента `~/.pi/agent/skills/redmine-cli/`). Правка здесь; внешнюю копию синхронизировать вручную.
 
 Do **not** invent subcommands or flags — run `redmine <cmd> --help`. Upstream patterns: [aarondpn/redmine-cli SKILL](https://github.com/aarondpn/redmine-cli/blob/main/skills/redmine-cli/SKILL.md).
 
@@ -48,13 +51,17 @@ bash /tmp/redmine-install.sh
 
 - Parse programmatically with **`-o json`** (stdout only); use `jq`, not ad-hoc regex/Python.
 - Default list limit is 100; use **`--limit 0`** for all rows.
-- Name flags (`--project`, `--tracker`, `--status`, `--priority`, `--assignee`, …) resolve by name; **`--assignee me`** = current user.
+- Name flags (`--project`, `--tracker`, `--status`, `--priority`, …) resolve by name; **`--assignee` по имени на этом сервере падает** — только числовой id или `me` (= текущий пользователь), см. [Ловушки](#verified-flags-cli-v2110).
 - `issues list` defaults to **open**; use `--status closed`, `--status "*"`, or a status name.
 - `issues update` sends **only** flags you pass.
 - Dates: `--due-date`, `--from`, `--to` accept literal `today`.
+- `issues get -o json` без `--journals` / `--attachments` / `--relations` этих блоков не содержит — журнал приходит только с `--journals`.
+- `issues update --description` принимает **строку**, не файл: `--description "$(cat /tmp/desc.txt)"`. Прочитанное через `jq -r .description` возвращается с **CRLF** — при построчных заменах открывай файл с `newline=''` и правь `\r\n`, иначе точное совпадение не находится.
 - Versions: prefer `redmine versions list --open` before assigning.
 - **Не угадывай флаги.** У `comment`, `update` и `close` разные схемы (см. [Verified flags](#verified-flags-cli-v2110)); один неверный флаг = ошибка `unknown flag` и потерянный вызов. Если флаг отвалился — `redmine <cmd> --help`, поправь себя и (если скилл врал) сразу поправь этот файл.
 - On failure twice: stop, run `--help`, ask the user — do not invent flags.
+- **Не глушить stderr у `redmine`.** `redmine … 2>/dev/null` превращает `unknown flag: --search` в пустой список, и «ничего не заведено» читается как факт: в #15676 так четыре раза решили, что находки нигде не заведены, и завели работу, которую уже планировала соседняя задача (#15719 п.1). Нужен тихий вызов — сначала `redmine <cmd> --help` и убедись, что флаг существует.
+- **Исполнителя, приоритет и статус не угадывать.** Поле, которого нет в запросе, заполняется по умолчанию: исполнитель — *автор запроса* (`redmine my-account`), приоритет — дефолт трекера, статус — дефолт проекта. Соседняя задача с похожей темой или реплика со встречи («паритет отдаём X») — не основание назначить X: это другой объём работ. Если контекст указывает на другого человека, а пользователь его не назвал — один `ask_user_question` до создания, не после. В ответе после создания перечисли, какие поля взяты по умолчанию (#15579 — пакет создан на QA, хотя нужен был для самопроверки автору).
 - **Описания и notes — только Textile** (не Markdown). Нарушение → HTML **500** при живой странице, API при этом часто **200** (см. ниже).
 - **Роль не умеет удалять задачи и не умеет удалять/править notes** (см. [Deleting: what this role cannot do](#deleting-what-this-role-cannot-do)). Не пробуй, не ищи обход, не проси пользователя «удалить в веб-интерфейсе».
 - **Пробные и черновые задачи запрещены.** Не создавай задачу «на проверку» — ни чтобы узнать следующий номер, ни чтобы проверить флаги, ни чтобы «посмотреть, как ответит API». Темы вида `probe`, `test`, `проверка`, `tmp`, `draft`, `черновик` — это пробный объект, а не работа. Номер следующей задачи — только чтением: `redmine issues list --status "*" --sort id:desc --limit 1 -o json | jq -r '.[0].id'`. Id созданной — из ответа: `redmine issues create … -o json | jq -r '.id'`; **`tail`/`head` на этом выводе запрещены** — они срезают поле `id`, и дальше хочется «измерить» номер созданием. Если id потерян — найди задачу чтением (`--filter "subject=~…"`), не создавай вторую. Создание, изменение и удаление задач — только по явному поручению пользователя.
@@ -69,7 +76,10 @@ bash /tmp/redmine-install.sh
 | Изменить поля/добавить note | `issues update <id>` | `--note`, `--private-notes`, `--status`, `--assignee`, `--description`, `--custom-field`, `--attach`, `--due-date`, `--estimated-hours`, `--done-ratio` |
 | Закрыть | `issues close <id>` | `--note` |
 | Читать | `issues get <id>` | `--journals`, `--attachments`, `--relations`, `--children`, `--download-attachments <dir>`, `--include journals,children,relations,attachments` |
-| Список/поиск | `issues list` | `--project`, `--status`, `--assignee`, `--author`, `--priority`, `--parent`, `--category`, `--query`, `--query-id`, `--filter key=value`, `--sort`, `--limit 0` |
+| Дети задачи | `issues list --parent <id> --status "*"` | `--children` у `issues get` отдаёт **только id** — без тем и статусов, и вторым запросом их всё равно берут списком. Один вызов вместо двух (#15735 п.5) |
+| Список статусов | `statuses list` | Без флагов, `-o json` отдаёт `id` и `name`. Запасной путь — `redmine api /issue_statuses.json` + выборка из `.issue_statuses`. `redmine issue-statuses list` — **нет такой команды** (`unknown command`, #15735 п.5) |
+| Список | `issues list` | `--project`, `--status`, `--assignee`, `--author`, `--priority`, `--parent`, `--category`, `--query`, `--query-id`, `--filter key=value`, `--sort`, `--limit 0` |
+| Поиск по тексту | `search` (и `search issues`) | `search "<query>"`, `--all-words`, `--attachments`, `--limit`; у `issues list` **нет** `--search` — эквивалент `--filter "subject=~…"` |
 | Скачать вложение | `attachments download <id>` | `-d`/`--dir`, `--path` (в т.ч. `--path -` в stdout) — **не** `-o` |
 | Учесть время | `time log` | `--issue`, `--hours` (обязателен), `--activity`, `--date`, `--comment`, `--project`, `--user` |
 | Версии | `versions list` | `--project` (обязателен), `--open`, `--closed`, `--locked`, `--status` |
@@ -81,53 +91,83 @@ bash /tmp/redmine-install.sh
 
 * `issues comment <id> --notes "..."` → `Error: unknown flag: --notes`. Правильно: `-m`.
 * `attachments download -o json` — это формат подтверждения, а не путь; файл кладётся в `--dir`/`--path`.
+* `redmine issues list --search "…"` → `Error: unknown flag: --search` (проверено 17.11.2026, #15719). Поиск по тексту: `redmine search "<query>" -o json` (объекты с `id` и `title`, не задачи), `redmine search issues "<query>"`, либо `redmine issues list --filter "subject=~…"` — точные поля задачи, как у `issues get`.
 * `redmine version` → `unknown command`; версия смотрится через `redmine --version`.
+* **`--assignee "Имя Фамилия"` на этом сервере не резолвится** (проверено на #15602, 14.11.2026). Резолвер идёт в `GET /users.json`, у роли нет прав → `403`, CLI падает:
+
+  ```
+  Error: resolving assignee: cannot resolve assignee by name (listing users requires admin privileges).
+  Use a numeric user ID instead, or "me" for yourself
+  ```
+
+  Код возврата 1. `--status` по имени при этом резолвится нормально (через `GET /issue_statuses.json`). Исполнителя задавать **числовым id** (`--assignee 128`) или `me`; id смотреть в уже назначенных задачах, `issues get` чужой задачи, или спросить.
+* **Резолв полей идёт до `PUT`, и падение резолва отменяет весь запрос.** В `-v` видно `[debug] Resolver: …`, затем `[debug] HTTP PUT …`. Если `PUT` в логе нет — не применилось **ни одно** поле, включая успешно разрешённый `--status`. Не считать «половину» применённой.
+* **Код возврата теряется в конвейере.** `redmine … | jq` / `| head` возвращает код `jq`/`head`, а не CLI: упавший `update` выглядит успешным. Проверять без конвейера или с `set -o pipefail`.
+* **Тело `issues update -o json` не содержит статуса и исполнителя.** Успешный ответ — `{"ok": true, "action": "updated", "resource": "issue", "id": N, "message": …}`: полей `status`/`assigned_to` там нет вовсе, поэтому `jq '{id, status:.status.name}'` по нему даёт `id` и `null`. Это **не** признак сбоя (#15661 п.4). Ошибка — тело `{"error":{"message":…,"code":"unknown"}}` или `ok: false`; проверять по ним, а применённое состояние — `issues get` (ниже).
+
+  ```bash
+  # Код CLI не теряется: сначала вывод в переменную, потом разбор (см. буллет выше).
+  out=$(redmine issues update <id> --status "В работе (спринт)" -o json) || exit 1
+  printf '%s' "$out" | jq -e '.ok == true' > /dev/null || { echo "update не применился: $out" >&2; exit 1; }
+  state=$(redmine issues get <id> -o json) || exit 1
+  printf '%s' "$state" | jq -r '"\(.status.name) | \(.assigned_to.name // "—")"'
+  ```
 
 ## Description / notes (Textile) — частая причина HTML 500
 
 Сервер Redmine (`redmine.msb-leasing.ru`) рендерит `description` и `notes` через **Textile (RedCloth)**. API `GET/PUT /issues/<id>.json` может быть **200/204**, а `GET /issues/<id>` (HTML) — **500 Internal error**. Уже ловили многократно (#13954 и раньше).
 
-### Длинный текст — из файла, не строкой
-
-`--description` и `--note` принимают только строку, поэтому описание на 5–10 КБ целиком уезжает в переписку агента. Обёртка `redmine-file` (в `PATH`, `~/.local/bin/redmine-file`) читает текст из файла сама:
-
-```bash
-redmine-file issues create --project "МСБ-лизинг" --parent 15598 --subject "…" --description-file /tmp/desc.txt
-redmine-file issues update 15647 --status "Ожидает тестирование" --note-file /tmp/note.txt
-```
-
-Пиши текст в файл, в вызов передавай только путь. Остальные аргументы проходят в `redmine` без изменений.
-
 ### Перед create / update description или comment
 
 1. Пиши **Textile**, не Markdown.
-2. После записи **обязательно** проверь HTML:
+2. **Markdown-жирного в тексте нет** — ни внутри `@code@`, ни рядом, ни в обычном абзаце. Запрещён
+   именно `**слово**`: две звёздочки, за которыми идёт не пробел. `**` в начале строки — маркер
+   вложенного списка — легальный Textile и под запрет не попадает. Это единственная проверка, которую
+   видно без Redmine и которая ловит самый частый случай (#15666 п.5). Текст держи в файле — его же
+   читает `--note "$(cat "$NOTE")"`:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' \
-  -H "X-Redmine-API-Key: ${REDMINE_API_KEY}" \
-  "${REDMINE_SERVER}/issues/<id>"
-# ожидай 200; если 500 — чини Textile, не создавай новую задачу
+NOTE=/tmp/redmine-<id>/note.textile
+[ -s "$NOTE" ] || { echo 'STOP: файл заметки не найден или пуст — проверять нечего' >&2; exit 1; }
+if grep -nE '\*\*[^ *]' "$NOTE"; then
+  echo 'STOP: Markdown-жирный (**слово**) — RedCloth упадёт; жирный в Textile: *слово*' >&2
+  exit 1
+fi
 ```
 
-### Запрещено в `@code@` spans (ломает RedCloth → 500)
+Проверка на отсутствующем файле закрыта отдельно: `grep` без файла возвращает код 2, и без строки
+`[ -s ]` гейт прочитал бы это как «совпадений нет» — тот самый гейт, который проходит вхолостую.
 
-- Скобки: `@Foo::bar()@` → пиши `@Foo::bar@` или `@Foo::bar@()` вне span.
-- Вложенный Markdown: `**жирный**`, `*(курсив)*` рядом с `@...@`.
+3. После записи **обязательно** проверь HTML одной командой — она сама подставит креды и упадёт на ≠200:
+
+```bash
+bash .pi/skills/redmine-cli/scripts/check-issue-html.sh <id>
+# issue #<id>: HTTP 200 (expect 200) → страница жива
+# HTTP 500 → чини Textile, не создавай новую задачу
+```
+
+### Запрещено (ломает RedCloth → 500)
+
+- **Markdown-жирный — нигде.** `**жирный**` и `*(курсив)*` роняют страницу не только внутри
+  `@code@`: и рядом с ним, и в обычном абзаце без всякого кода. Запрет про Markdown-выделение, а не
+  про `**` вообще: вложенный список в начале строки — легальный Textile (см. ниже). Оговорки «только
+  в span» нет и не должно быть — journal 51953 положил страницу #15664 заметкой, где жирный стоял
+  рядом со span (#15666 п.5). Жирный — только Textile: `*жирный*`.
+- Скобки в span: `@Foo::bar()@` → пиши `@Foo::bar@` или `@Foo::bar@()` вне span.
 - Непарные `@` (нечётное число на строке / в тексте).
 
 ```text
 Плохо:  @DiscountFactorChainBasePaymentStrategy::balance()@
 Хорошо: @DiscountFactorChainBasePaymentStrategy::balance@
 
-Плохо:  **Эта задача** / *(отвергнуто)* рядом с @code@
+Плохо:  **Эта задача** / *(отвергнуто)* — в заметке, рядом с @code@ или без него
 Хорошо: *Эта задача* / (отвергнуто) — Textile emphasis без Markdown
 ```
 
 ### Разрешённый Textile (кратко)
 
 - Заголовки: `h2.`, `h3.`
-- Списки: `*`, вложенные `**`
+- Списки: `*`, вложенные `**`; нумерованный — `#` (не `1.` — Textile его не нумерует)
 - Код/моно: `@identifier@` (без `()` внутри)
 - Акцент: `*текст*` (не `**текст**` из Markdown)
 - Ссылки на задачи: `#12345`
@@ -185,8 +225,12 @@ URL for user: `https://redmine.msb-leasing.ru/issues/<id>` or `redmine issues op
 ```bash
 redmine issues list --project <id-or-name> --assignee me -o json
 redmine issues list --status "*" --limit 0 -o json
-redmine search "<query>" -o json
+redmine issues list --filter "subject=~Ретро" --limit 0 -o json   # точные поля задачи
+redmine search "Ретро #15676" -o json                          # поиск по тексту: id + title
 ```
+
+`issues list` не знает `--search`: неизвестный флаг падает, а с погашенным stderr выглядит как
+пустой список (#15719 п.1). Поиск по тексту — `search` или `--filter "subject=~…"`.
 
 ### Create / update / comment
 
@@ -199,6 +243,41 @@ redmine issues close <id>
 ```
 
 After create: give the user the issue URL.
+
+### Длинный текст — обёрткой `redmine-file`
+
+`--description` и `--note` принимают только строку, поэтому описание на несколько килобайт целиком
+попадает в переписку агента. Обёртка `~/.local/bin/redmine-file` (в `PATH` раньше `redmine`) читает текст
+из файла и подставляет в тот же флаг:
+
+```bash
+redmine-file issues create --project "МСБ-лизинг" --parent 15598 --subject "…" --description-file /tmp/desc.txt
+redmine-file issues update 15705 --note-file /tmp/note.txt [--private-notes]
+```
+
+Флаги обёртки — `--description-file` и `--note-file` (в том числе в форме `--flag=путь`). На `--help`
+обёртка печатает свой блок **в stderr** и передаёт вызов в `redmine`; в stdout-пайп эти строки не
+попадают, поэтому `redmine-file issues create --help | grep description-file` по-прежнему даёт 0 — это
+не отсутствие флага (#15705 п.4).
+
+### Verify that an update landed (canonical read)
+
+Один и тот же вызов и для «проверить, что нота и вложение на месте», и для передачи в QA
+(`hand-off-to-testing` §5). Флаги `--journals` и `--attachments` — не украшение: без них ответ
+приходит с `notes: 0` и без блока вложений даже при опубликованной ноте, и следующий шаг — повторный
+`--note`, то есть дубль в трекере (#15611 п.5).
+
+**Ключа может не быть вовсе.** На задаче без вложений `--attachments` не даёт `attachments: []` —
+ключа в ответе нет (проверено на #15675). `jq` это маскирует: `length` от `null` равен нулю, — а
+`python3` падает на `KeyError`, так и случилось в сессии. Читать только через `// []` (#15675 п.5):
+
+```bash
+redmine issues get <id> --journals --attachments -o json \
+  | jq -r '"\(.status.name) · нот: \(.journals // [] | length) · вложений: \(.attachments // [] | length)"'
+```
+
+Нужны связи и дочерние — те же флаги плюс `--relations --children`; «всё сразу» — `--include
+journals,children,relations,attachments`.
 
 ### Create: never twice (это уже ловили)
 
@@ -222,6 +301,11 @@ redmine issues create … -o json | jq -r '.id'      # correct
 redmine issues create … -o json | tail -20         # forbidden: cuts the id off
 ```
 
+Без `-o json` номер — **в первой строке** ответа (`Created issue <id>: <subject>`), ниже идут поля
+(Tracker, Status, Subject, Assignee). `tail -5` на таком выводе оставляет только поля, и номер
+приходится искать вторым запросом — так и случилось при заведении #15670. Обёртка `redmine-file`
+ничего не меняет: она передаёт вывод `redmine` как есть.
+
 If the id is already lost, get the next number read-only — never by creating a throwaway issue:
 
 ```bash
@@ -230,11 +314,13 @@ redmine issues list --status "*" --sort id:desc --limit 1 -o json | jq -r '.[0].
 
 Prefer the guard in `scripts/create-issue.sh`: it refuses when an issue with the exact subject already exists, POSTs through `redmine api` (which exits non-zero on 4xx/5xx, unlike curl), tolerates a nested or missing id, and on an ambiguous response looks the issue up and prints its id instead of creating a second one. Exit codes: 0 created or recovered, 2 already exists, 3 ambiguous, 4 genuinely failed.
 
+**Путь к скрипту зависит от ветки.** `.pi/skills/` есть на эпик-ветке, но не на `master`. Если основное дерево на `master` и `.pi/skills/redmine-cli/scripts/create-issue.sh` не найден — не ищи его по worktree: используй `redmine api /issues.json --input /tmp/payload.json` (тот же payload, exits non-zero на 4xx/5xx) или скрипт из worktree эпика. То же для `scripts/check-issue-html.sh` (проверка рендера после записи): нет скрипта — тот же `curl -sS -o /dev/null -w '%{http_code}'` с заголовком `X-Redmine-API-Key`.
+
 ```bash
 jq -n --rawfile desc /tmp/desc.textile \
   '{issue:{project_id:5,tracker_id:1,subject:"…",description:$desc,tag_list:["Калькулятор-API"]}}' \
   > /tmp/payload.json
-~/.pi/agent/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json   # prints the id
+.pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json   # prints the id
 ```
 
 If you must shell out to curl, always pass `-f` (`--fail-with-body`) so HTTP errors are loud, and print `REDMINE_SERVER` before the call so a stub/local server mix-up is visible.
@@ -269,7 +355,7 @@ jq -n --rawfile desc /tmp/desc.textile '{"issue":{
   "project_id":5,"tracker_id":2,"subject":"…","description":$desc,
   "parent_issue_id":11301,"assigned_to_id":127,"priority_id":3,
   "tag_list":["Калькулятор-API"]}}' > /tmp/payload.json
-~/.pi/agent/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json
+.pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json
 ```
 
 `redmine api /issues.json -X POST --input /tmp/payload.json` is the raw equivalent: same body, and it exits non-zero on HTTP errors. Do not hand-roll `curl -sS` here; without `-f` it reports success on a 500.
@@ -287,8 +373,29 @@ curl -sSf -o /dev/null -w '%{http_code}\n' -X PUT \
 Notes:
 
 - JSON `GET /issues/<id>.json` usually **omits** `tag_list` / `tags` — verify tags in HTML (`Теги:`) or the issue page.
-- Common calculator tag: **`Калькулятор-API`**.
 - Multiple tags: `"tag_list": ["Калькулятор-API", "UI"]`.
+
+#### Правило: тег `Калькулятор-API` на всех задачах калькулятора
+
+Якорь охвата — поддерево **#9853** «Планирование переработки лизингового калькулятора»: всё, что под ним, — калькулятор. Прямые дети: этапы 10432, 10540, 10805, 11310, 11311, 11312. Внутри 11312 — 11301 (UI формы графика), внутри 11310 — 15598 (паритет V2 на живых графиках), а под 15598 — #15602, #15599, #15601. Тег **`Калькулятор-API`** ставится на любую из этих задач.
+
+Задачи про калькулятор и форму графика без родителя в этом дереве тоже получают тег — по смыслу, а не по родителю: меняет расчёт, форму графика, её админские настройки, пакет `msb-calculator-api` или фикстуры расчёта. Примеры: #15600 (заявка без строки `leasing_request_values`), #15596 (подпись «Баллон» → «Выкупной платёж») — обе без родителя.
+
+Проверять на двух шагах:
+
+1. **При создании** — `tag_list` сразу в теле `POST /issues.json` (см. пример выше).
+2. **При сдаче в работу/на тестирование** — убедиться, что тег есть; у старых задач его нет, добавлять при первой же правке полей.
+
+Подкоманда `issues update` тег не ставит: флага `--tag` нет. Если менять статус и тег одновременно — одним `PUT` через сырой API, оба поля в одном теле:
+
+```bash
+jq -n '{issue:{status_id:9, tag_list:["Калькулятор-API"]}}' > /tmp/p.json
+redmine api /issues/<id>.json -X PUT --input /tmp/p.json -i   # 204 No Content
+```
+
+`-F` здесь не подходит: это `ключ=значение` для скалярных полей (`-F 'issue[subject]=…'`), массив строк им не задать — только `--input` с JSON-файлом.
+
+Оговорка про путаницу в номерах: `11301` висит под `11312`, а не наоборот, и `15602 → 15598 → 11310` идёт мимо 11301 — оба этапа соседние под `9853`. Поэтому проверка «входит ли в поддерево 11301» даёт ложный минус на половине задач; проверять надо поддерево **9853**.
 
 ### Attachments (required when present)
 
