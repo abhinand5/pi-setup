@@ -25,8 +25,10 @@ and prints the exact fix for anything missing. Run it once per session before
 blaming a tool call. `uat.sh help` lists the other subcommands.
 
 If `mcp__playwright__*` tools are absent, the server is not connected: run
-`pi mcp list`, then `/reload` (the tool list only refreshes on reload or a new
-session).
+`mcp({ connect: "playwright" })` first — it starts the server and refreshes the
+tool list without the user. `pi mcp list` shows the configured servers, and
+`/reload` (a new session works too) is the manual fallback when the gateway
+cannot connect.
 
 ## Logging in (server-side)
 
@@ -54,12 +56,23 @@ argv — argv is visible in `ps`.
 
 After that the MCP server picks the state up on its next start: the Xvfb wrapper
 exports `PLAYWRIGHT_MCP_STORAGE_STATE` when the file exists, and `--isolated`
-still keeps the profile in memory. So run `/reload` once after the login, then
-navigate to any page — you are already logged in. `--profile` picks the file,
-`UAT_STORAGE_STATE` points the server at another one; `--dry-run` checks the
-paths without starting a browser. The login runs Playwright's own Chromium, not
-the system Chrome that `uat.sh doctor` looks for — if it is missing, the script
-says so and `npx playwright install chromium` fixes it.
+still keeps the profile in memory. So the server has to be (re)started once
+after the login — and the agent can do that itself, without asking the user:
+
+```
+mcp({ connect: "playwright" })
+```
+
+The MCP gateway starts the server again, it reads
+`~/.pi/agent/uat-auth/current.json` on start, and the next `browser_navigate`
+lands on an authenticated page. `/reload` in pi does the same thing by hand and
+remains the fallback for a session where the gateway is not available or the
+tool list itself is missing (see “Start here”); it needs the user, so it is not
+the default answer. `--profile` picks the file, `UAT_STORAGE_STATE` points the
+server at another one; `--dry-run` checks the paths without starting a browser.
+The login runs Playwright's own Chromium, not the system Chrome that
+`uat.sh doctor` looks for — if it is missing, the script says so and
+`npx playwright install chromium` fixes it.
 
 Project-specific details (form selectors, where the dev one-time code comes
 from) belong to the project skill — this section owns only the mechanism.

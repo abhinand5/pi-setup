@@ -192,7 +192,7 @@ EOF
       ok "$(grep '^playwright: connected' <<<"$out")"
     else
       warn "playwright is not connected in this shell"
-      hint "run: pi mcp list   (a running session needs /reload after config changes)"
+      hint "run: pi mcp list   (a running session needs mcp({ connect: \"playwright\" }) or /reload after config changes)"
     fi
   fi
 
@@ -316,7 +316,7 @@ EOF
         printf 'kept existing %s\n' "$BASE_CONFIG"
       fi
 
-      printf '\nNext: run /reload in pi (or start a new session), then: uat.sh doctor\n'
+      printf '\nNext: restart the server — mcp({ connect: "playwright" }) (fallback: /reload in pi), then: uat.sh doctor\n'
       ;;
     *) die "config: unknown subcommand '$sub' (show|install)" ;;
   esac
@@ -561,7 +561,8 @@ EOF
   mkdir -p "$AUTH_DIR" && chmod 700 "$AUTH_DIR"
   cp "$state" "$CURRENT_STATE" && chmod 600 "$CURRENT_STATE"
   printf 'login: profile %s is now the current one (%s)\n' "$profile" "$CURRENT_STATE"
-  printf 'login: done — restart the MCP server (/reload in pi) to use the saved session\n'
+  printf 'login: done — restart the MCP server to use the saved session:\n'
+  printf '  mcp({ connect: "playwright" })   # agent-side, no user needed; fallback: /reload in pi\n'
 }
 
 # ---------------------------------------------------------------------------
