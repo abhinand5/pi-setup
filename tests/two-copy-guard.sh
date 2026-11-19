@@ -56,16 +56,22 @@ run_install --force >/dev/null 2>&1 || fail "--force не снял отказ"
 cmp -s "$clone/skills/redmine-cli/SKILL.md" "$pi_home/skills/redmine-cli/SKILL.md" \
   || fail "--force не перезаписал живую копию"
 
-# (3) Живая копия устарела (равна HEAD) — restore идёт без вопросов.
+# (3) Живая копия равна HEAD (устарела), копия репозитория уехала вперёд — restore пишет без вопросов:
+# терять в живой копии нечего, там ровно закоммиченное состояние.
 git -C "$clone" checkout -q -- skills config
-run_install >/dev/null 2>&1 || fail "restore отказал на устаревшей живой копии"
+git -C "$clone" show HEAD:skills/redmine-cli/SKILL.md > "$pi_home/skills/redmine-cli/SKILL.md"
+printf 'правка в копии репозитория\n' >> "$clone/skills/redmine-cli/SKILL.md"
+run_install >/dev/null 2>&1 || fail "restore отказал, когда живая копия равна HEAD"
+cmp -s "$clone/skills/redmine-cli/SKILL.md" "$pi_home/skills/redmine-cli/SKILL.md" \
+  || fail "restore не обновил устаревшую живую копию"
+git -C "$clone" checkout -q -- skills
 
 # (4) sync --dry-run: реальное расхождение, а не множество путей.
 printf 'живая правка\n' >> "$pi_home/skills/redmine-cli/SKILL.md"
 out="$(env HOME="$home" PI_HOME="$pi_home" XDG_CONFIG_HOME="$home/.config" bash "$clone/sync.sh" --dry-run)"
 case "$out" in
-  *"+1 −0 строк"*) ;;
-  *) fail "dry-run не показал число разошедшихся строк: $out" ;;
+  *"skills/redmine-cli/SKILL.md  (+"*" строк"*) ;;
+  *) fail "dry-run не показал файл и число разошедшихся строк: $out" ;;
 esac
 case "$out" in
   *"config/settings.example.json, config/mcp.example.json"*) fail "dry-run печатает множество путей: $out" ;;

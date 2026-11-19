@@ -605,11 +605,11 @@ cd "$ROOT"
 # Сторож идёт до первой записи: перечислить пары, показать реальные расхождения и решить,
 # можно ли перезаписывать (#15836 п.2, #15838 п.7). Раньше --dry-run печатал множество
 # управляемых путей — по нему нельзя было понять, что именно разошлось.
-dg_standard_pairs repo
+dg_standard_pairs repo sync
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: sync from $PI_HOME into $ROOT"
-  if ((${#DG_ITEMS[@]})); then
+  if [[ -n "${DG_ITEMS[@]+x}" ]]; then
     dg_report dry-run
   else
     echo "nothing diverged: живая копия и репозиторий совпадают"

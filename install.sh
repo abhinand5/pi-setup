@@ -175,7 +175,16 @@ copy_path() {
 # перезаписал бы их молча (#15836 п.2, #15838 п.7).
 # --revert пишет из каталога бэкапа, а не из репозитория: две копии тут не при чём.
 if [[ -z "$REVERT_DIR" && ( "$RESTORE" == "1" || "$COPY_CONFIG" == "1" ) ]]; then
-  dg_standard_pairs live
+  # Сверяем только то, что этот запуск действительно пишет: --restore не трогает AGENTS.md и
+  # ~/.tmux.conf, --copy-config не трогает skills/themes/extensions.
+  if [[ "$RESTORE" == "1" && "$COPY_CONFIG" == "1" ]]; then
+    dg_mode=all
+  elif [[ "$RESTORE" == "1" ]]; then
+    dg_mode=restore
+  else
+    dg_mode=copy-config
+  fi
+  dg_standard_pairs live "$dg_mode"
   if [[ "$DRY_RUN" == "1" ]]; then
     dg_report dry-run
   else

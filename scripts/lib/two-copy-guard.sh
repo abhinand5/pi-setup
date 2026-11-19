@@ -37,6 +37,9 @@ dg_compare() {
   DG_ITEMS+=("$live|$repo")
 
   rel="${repo#"$ROOT"/}"
+  # `report` — пара только показывается в отчёте: писать её и так безопасно (install.sh кладёт
+  # рядом .bak-копию, как и раньше), но расхождение должно быть видно (#15836 п.2).
+  [[ "$target" == "report" ]] && return 0
   if [[ "$target" == "live" ]]; then
     # install: replacing the live copy is safe only while live is still the committed version.
     dg_matches_head "$rel" "$live" && return 0
@@ -67,22 +70,34 @@ dg_compare_tree() {
   [[ -d "$live" && -d "$repo" ]] || return 0
   while IFS= read -r rel; do
     dg_compare "$live/$rel" "$repo/$rel" "$target"
-  done < <(cd "$repo" && find . -type f -printf '%P\n' | sort)
+  # `find | sed`, а не `find -printf`: -printf есть только в GNU find, а на BSD/macOS он падает
+  # внутри подстановки процесса молча — сторож тогда не сравнил бы ни одного файла (#15838 п.7).
+  done < <(cd "$repo" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)
 }
 
-# dg_standard_pairs [target]: every file this repo keeps in two copies.
+# dg_standard_pairs [target] [mode]: every file this repo keeps in two copies. `mode` is what the run
+# is going to write — `restore` (skills/themes/extensions + docs), `copy-config` (AGENTS.md, dotfiles),
+# `all`, or `sync` for the live -> repo direction. A pair the run would not touch is not compared:
+# refusing `--restore` over a machine-local AGENTS.md it deliberately preserves is a false alarm.
 dg_standard_pairs() {
-  local target="${1:-repo}" live="${PI_HOME:-$HOME/.pi/agent}"
+  local target="${1:-repo}" mode="${2:-all}" live="${PI_HOME:-$HOME/.pi/agent}"
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
-  dg_compare "$live/AGENTS.md" "$ROOT/config/AGENTS.md" "$target"
-  dg_compare "$live/docs/delegation-models.md" "$ROOT/config/delegation-models.md" "$target"
-  dg_compare "$live/docs/session-logs.md" "$ROOT/config/session-logs.md" "$target"
+  if [[ "$mode" == "restore" || "$mode" == "all" || "$mode" == "sync" ]]; then
+    dg_compare "$live/docs/delegation-models.md" "$ROOT/config/delegation-models.md" "$target"
+    dg_compare "$live/docs/session-logs.md" "$ROOT/config/session-logs.md" "$target"
+    dg_compare_tree "$live/skills" "$ROOT/skills" "$target"
+    dg_compare_tree "$live/themes" "$ROOT/themes" "$target"
+    dg_compare_tree "$live/extensions" "$ROOT/extensions" "$target"
+  fi
+  if [[ "$mode" == "copy-config" || "$mode" == "all" || "$mode" == "sync" ]]; then
+    dg_compare "$live/AGENTS.md" "$ROOT/config/AGENTS.md" "$target"
+    # dotfiles restore keeps a .bak рядом, поэтому здесь сторож только показывает расхождение.
+    dg_compare_tree "$HOME" "$ROOT/home" "$([[ "$target" == "live" ]] && echo report || echo "$target")"
+  fi
+  # allow.txt живёт в двух копиях и синхронизируется (`--add-personal` пишет в живую).
+  # deny.txt — нет: это политика репозитория, install перезаписывает её всегда, а sync её не
+  # копирует вовсе (README: «Restore overwrites the live deny.txt from the repo»).
   dg_compare "$cfg/ru-spellcheck/allow.txt" "$ROOT/config/ru-spellcheck/allow.txt" "$target"
-  dg_compare "$cfg/ru-spellcheck/deny.txt" "$ROOT/config/ru-spellcheck/deny.txt" "$target"
-  dg_compare_tree "$live/skills" "$ROOT/skills" "$target"
-  dg_compare_tree "$live/themes" "$ROOT/themes" "$target"
-  dg_compare_tree "$live/extensions" "$ROOT/extensions" "$target"
-  dg_compare_tree "$HOME" "$ROOT/home" "$target"
 }
 
 # dg_report <mode> [refusal-text]: one `diff --stat` per diverged pair (a dry run is read as a report),
@@ -90,7 +105,9 @@ dg_standard_pairs() {
 dg_report() {
   local mode="$1" hint="${2:-}" item live repo rel
   dg_enabled || return 0
-  ((${#DG_ITEMS[@]})) || return 0
+  # `${ARRAY[@]+x}` вместо `((${#ARRAY[@]}))`: на bash 3.2 (штатный macOS) пустой массив под
+  # `set -u` иначе валит скрипт с "unbound variable".
+  [[ -n "${DG_ITEMS[@]+x}" ]] || return 0
   echo "two-copy guard: живая копия расходится с репозиторием:"
   local adds dels
   for item in "${DG_ITEMS[@]}"; do
@@ -104,7 +121,7 @@ dg_report() {
   done
   echo "  полный дифф: git -C $ROOT diff --no-index -- <копия-репозитория> <живая-копия>"
 
-  ((${#DG_REFUSED[@]})) || return 0
+  [[ -n "${DG_REFUSED[@]+x}" ]] || return 0
   {
     echo "two-copy guard: у цели есть собственные правки — молча перезаписать нельзя:"
     for item in "${DG_REFUSED[@]}"; do

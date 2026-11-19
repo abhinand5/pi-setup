@@ -54,6 +54,12 @@ if (cd "$repo" && "$TOOL" --add харнесс >/dev/null 2>&1); then
 fi
 [[ -f "$repo/.ru-spellcheck-allow" ]] && fail "--add создал проектный словарь, хотя должен был отказать"
 grep -qx 'харнесс' "$XDG_CONFIG_HOME/ru-spellcheck/allow.txt" && fail "--add-personal дописал deny-слово"
+# Тот же запрет для проектного `.ru-spellcheck-deny`: проверка его читает, значит и `--add` тоже.
+: > "$XDG_CONFIG_HOME/ru-spellcheck/deny.txt"
+printf 'апрув\n' > "$repo/.ru-spellcheck-deny"
+if (cd "$repo" && "$TOOL" --add апрув >/dev/null 2>&1); then
+    fail "--add записал слово из проектного .ru-spellcheck-deny"
+fi
 
 # Проектный deny-файл читается наравне с машинным и так же приоритетен.
 : > "$XDG_CONFIG_HOME/ru-spellcheck/deny.txt"
@@ -81,15 +87,13 @@ case "$out" in
 esac
 
 # Верное слово того же корня проходит: звёздочка матчит по началу слова, а не по любому совпадению.
+# Слово редкое и словарю неизвестно: находка SPELLING тут допустима, находка DENY — нет.
 printf 'ассертивность в переговорах уместна.\n' > "$WORK/stem-ok.md"
-if ! "$TOOL" "$WORK/stem-ok.md" > /dev/null 2>&1; then
-    # слово редкое — в словаре его может не быть; тогда правило стема всё равно не должно его банить
-    out="$("$TOOL" "$WORK/stem-ok.md" 2>&1)" || :
-    case "$out" in
-        *DENY*) fail "стем-запись запретила верное слово «ассертивность»: $out" ;;
-        *) ;;
-    esac
-fi
+out="$("$TOOL" "$WORK/stem-ok.md" 2>&1)" || :
+case "$out" in
+    *DENY*) fail "стем-запись запретила верное слово «ассертивность»: $out" ;;
+    *) ;;
+esac
 
 # Textile-код — цитата, а не проза: то же слово в `@…@` находкой не считается, без кода — считается.
 printf 'резолв\n' > "$XDG_CONFIG_HOME/ru-spellcheck/deny.txt"
@@ -101,14 +105,22 @@ fi
 printf 'Резолв прошёл без кода.\n' > "$WORK/no-textile.md"
 out="$("$TOOL" "$WORK/no-textile.md" 2>&1)" && fail "слово вне Textile-кода не проверено: $out"
 
-# Адрес почты не маскируется как Textile-код: `@` в нём одна.
-printf 'Пишите на %%s@example.com.\n' 'denis' > "$WORK/mail.md"
-if ! "$TOOL" "$WORK/mail.md" > /dev/null 2>&1; then
-    out="$("$TOOL" "$WORK/mail.md" 2>&1)"
-    case "$out" in
-        *"example.com"*) fail "адрес почты попал в проверку как слово: $out" ;;
-        *) ;;
-    esac
-fi
+# Адреса почты не маскируются как Textile-код — и два адреса в строке не прячут прозу между ними.
+printf 'Пишите на denis@example.com.\n' > "$WORK/mail.md"
+"$TOOL" "$WORK/mail.md" > /dev/null 2>&1 || fail "один адрес почты дал находку: $("$TOOL" "$WORK/mail.md" 2>&1)"
+printf 'Пишите на denis@example.com и petr@example.com, скрыпт готов.\n' > "$WORK/mail2.md"
+out="$("$TOOL" "$WORK/mail2.md" 2>&1)" || :
+case "$out" in
+    *"скрыпт"*) ;;
+    *) fail "проза между двумя адресами почты не проверена: $out" ;;
+esac
+
+# Два упоминания в строке не маскируют прозу между ними (`@ivan … @petr`).
+printf '@ivan скрыпт готов @petr\n' > "$WORK/mentions.md"
+out="$("$TOOL" "$WORK/mentions.md" 2>&1)" || :
+case "$out" in
+    *"скрыпт"*) ;;
+    *) fail "проза между двумя упоминаниями не проверена: $out" ;;
+esac
 
 echo "OK: deny-список приоритетнее allow, работают оба файла, --add запрещённое слово не узаконивает, словоформа и Textile-код учтены"
