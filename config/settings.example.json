@@ -37,7 +37,7 @@
   ],
   "defaultProvider": "openrouter",
   "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "low",
   "httpProxy": "http://127.0.0.1:10808",
   "hideThinkingBlock": true,
   "skills": [
@@ -111,7 +111,7 @@
       },
       "worker": {
         "model": "openrouter/z-ai/glm-5.3-flash",
-        "thinking": "medium"
+        "thinking": "low"
       },
       "researcher": {
         "thinking": "low",
@@ -122,19 +122,19 @@
       },
       "reviewer": {
         "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-        "thinking": "medium"
+        "thinking": "high"
       },
       "oracle": {
         "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-        "thinking": "medium"
+        "thinking": "high"
       },
       "evidence-auditor": {
         "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-        "thinking": "medium"
+        "thinking": "off"
       },
       "uat-browser": {
         "model": "openrouter/z-ai/glm-5.3-flash",
-        "thinking": "high"
+        "thinking": "low"
       }
     }
   },
@@ -149,7 +149,7 @@
       "consolidator": {
         "provider": "openrouter",
         "id": "deepseek/deepseek-v4.1-flash-1017",
-        "thinking": "medium"
+        "thinking": "off"
       }
     }
   }

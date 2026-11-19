@@ -38,17 +38,36 @@ One hard gate, in user config; do not weaken it without the user asking.
   the cap, which is the intended behaviour, not an exemption. For `reviewer` the override is
   `deepseek-v4.1-flash-1017`, and it is the only deepseek variant its allow list accepts: naming
   `openrouter/deepseek/deepseek-v4.1-flash` (no `-1017`) passes the cap and fails the gate.
-- `reviewer`, `oracle`, and `evidence-auditor` all default to `deepseek-v4.1-flash-1017` at
-  thinking `medium`, and additionally carry a per-agent allow list, so a review cannot escalate to
-  `glm-5.2`. `reviewer` may name only `glm-5.3-flash` and `deepseek-v4.1-flash-1017`: no
-  full-strength escalation on a review seat. `oracle` and `evidence-auditor` also allow `glm-5.3`
-  for a review that has to be argued at full strength.
+- `reviewer`, `oracle`, and `evidence-auditor` all default to `deepseek-v4.1-flash-1017`, and
+  additionally carry a per-agent allow list, so a review cannot escalate to `glm-5.2`. Thinking:
+  `reviewer` and `oracle` at `high`, `evidence-auditor` at `off` (matching a claim against a fetched
+  excerpt is lookup, not dialogue, and `off` is a level deepseek-1017 actually has). `reviewer` may
+  name only `glm-5.3-flash` and `deepseek-v4.1-flash-1017`: no full-strength escalation on a review
+  seat. `oracle` and `evidence-auditor` also allow `glm-5.3` for a review that has to be argued at
+  full strength.
+- **`medium` does not exist on most allowed models, and Pi clamps it UP first, never down.**
+  `deepseek-v4.1-flash-1017` and `deepseek-v4-flash-vision-exp` expose `off/low/high/max`;
+  `glm-5.3` and `glm-5.3-flash` expose only `low/high/max` (no `off` — there the floor is 2048
+  tokens, not zero); `z-ai/glm-5.2` exposes only `off/high/xhigh`, so even `low` becomes `high`.
+  `clampThinkingLevel` (pi-ai `dist/models.js`) scans upward from the requested level and falls back
+  down only when nothing above it exists, so a `medium` override on those ids silently buys the
+  16384-token `high` budget instead of 8192, and nothing surfaces it. Levels per seat must be levels
+  the model actually has: `medium` is real only on `minimax-m3`, `minimax-m3.1-flash`, `ling-3.*`,
+  `glm-4.7-flash`, `glm-5`, and `glm-5.1`. For the six ids with no `thinkingLevelMap` the catalog
+  proves only that nothing clamps: Pi forwards the raw level unchecked. An `off` pin holds only
+  while the seat stays on a model that maps it — `evidence-auditor` may also name `glm-5.3-flash`,
+  where `off` becomes `low`. Verify by running the configured pairs through `clampThinkingLevel`,
+  not by reading the number you wrote.
 - `~/.pi/agent/pi-pstack-adapter.json` pins every pstack role and panel to a capped model (see the
   `Model roles` table of `pstack_adapter status`). `glm-5.3` is assigned only to `judgment`,
-  `strongest-judgment`, and one seat of `arena-cross-judge-pool`; every runner, reviewer, and
-  `hillclimb` role runs `glm-5.3-flash`. The file carries no `modelFilter`: that filter also
-  blocked every delegation that named no model, which broke `code-review` and any skill that lets
-  a child inherit, so it was removed on purpose. `modelScope` is the gate.
+  `strongest-judgment`, and one seat of `arena-cross-judge-pool`; the six runner roles (`feature`,
+  `refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `general`) run `glm-5.3-flash` at thinking
+  `low`, while the panel runner seats (`arena-runners`, `architect-runners`,
+  `interrogate-reviewers`) keep `high` because a panel is a comparison, not a pass.
+  `strongest-judgment` asks `xhigh`, which `glm-5.3` cannot serve, so it clamps up to `max`: that
+  one is deliberate and is the only clamp the config keeps. The file carries no `modelFilter`: that
+  filter also blocked every delegation that named no model, which broke `code-review` and any skill
+  that lets a child inherit, so it was removed on purpose. `modelScope` is the gate.
 - The table in `~/.pi/agent/docs/delegation-models.md` is a dated observation, not a standing
   fact. Re-verify it with `pi-models-check` (one `max_tokens: 1` request per id, exit 1 on 404)
   before trusting it after a provider or guardrail change. A 404 there is the cap, not local config.
