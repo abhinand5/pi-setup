@@ -60,14 +60,19 @@ run_install --force >/dev/null 2>&1 || fail "--force не снял отказ"
 cmp -s "$clone/skills/redmine-cli/SKILL.md" "$pi_home/skills/redmine-cli/SKILL.md" \
   || fail "--force не перезаписал живую копию"
 
-# (3) Живая копия равна HEAD (устарела), копия репозитория уехала вперёд — restore пишет без вопросов:
-# терять в живой копии нечего, там ровно закоммиченное состояние.
+# (3) Живая копия — версия, которая в репозитории была раньше (устарела), копия репозитория уехала
+# вперёд: restore пишет без вопросов, терять в живой копии нечего.
 git -C "$clone" checkout -q -- skills config
 git -C "$clone" show HEAD:skills/redmine-cli/SKILL.md > "$pi_home/skills/redmine-cli/SKILL.md"
 printf 'правка в копии репозитория\n' >> "$clone/skills/redmine-cli/SKILL.md"
-run_install >/dev/null 2>&1 || fail "restore отказал, когда живая копия равна HEAD"
+run_install >"$WORK/i3a.out" 2>&1 || fail "restore отказал, когда живая копия — прежняя версия репозитория: $(cat "$WORK/i3a.out")"
 cmp -s "$clone/skills/redmine-cli/SKILL.md" "$pi_home/skills/redmine-cli/SKILL.md" \
   || fail "restore не обновил устаревшую живую копию"
+# Та же проверка на версии на шаг раньше HEAD: живая копия может отставать на несколько коммитов.
+git -C "$clone" checkout -q -- skills
+git -C "$clone" show HEAD~1:skills/redmine-cli/SKILL.md > "$pi_home/skills/redmine-cli/SKILL.md"
+printf 'ещё правка в копии репозитория\n' >> "$clone/skills/redmine-cli/SKILL.md"
+run_install >"$WORK/i3b.out" 2>&1 || fail "restore отказал, когда живая копия отстала на коммит: $(tail -5 "$WORK/i3b.out")"
 git -C "$clone" checkout -q -- skills
 
 # (4) sync --dry-run: реальное расхождение, а не множество путей.
