@@ -357,7 +357,14 @@ tests/ru-spellcheck-deny-list.sh     # denylist: priority over allow, exact form
 tests/ru-spellcheck-repo-dict.sh     # project .ru-spellcheck-allow and both --add targets
 tests/ru-spellcheck-long-input.sh    # long-input refusal (exit 3) and --allow-long
 tests/prek-deny-list-guard.sh        # commit hook: denylist edit blocked, SKIP and env bypass pass
+tests/two-copy-guard.sh              # sync/install refuse to overwrite a copy that has edits of its own
 ```
+
+Files that live in two copies — `skills/`, `config/AGENTS.md`, the spellcheck dictionaries — go through
+the two-copy guard (`scripts/lib/two-copy-guard.sh`): `./sync.sh --dry-run` prints `diff` line counts per
+file, and both `./sync.sh` and `./install.sh --restore` refuse with a non-zero exit when the copy they
+are about to overwrite carries its own edits. `--force` overwrites deliberately; `PI_SETUP_TWO_COPY_GUARD=0`
+turns the guard off for one run.
 
 Testing anything that writes outside the repo (`install.sh`, `sync.sh`, `uninstall.sh`) needs a
 throwaway `$HOME` and, for the sync case, a `git clone` — never a `cp -a` of a worktree, whose

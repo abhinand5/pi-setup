@@ -29,7 +29,9 @@ A word from the denylist is always a finding (kind DENY), even if it is spelled 
 in an allowlist: it is vocabulary the agent invented and must not legitimize (воркtree, инлайн,
 харнесс). Those entries are human-owned policy — `--add` refuses to write a denylisted word, and
 the deny file is not something an agent edits to legalize its own wording. Matching is exact on
-the word form (no stem expansion: `сет` must not ban `сети`). The denylist is not consulted by
+the word form (no stem expansion: `сет` must not ban `сети`), unless the entry ends with `*`:
+`ассерт*` covers `ассерты`/`ассертов`, because the short forms are the ones that leak into SPELLING
+with a false suggestion (#15836 п.3). The denylist is not consulted by
 `--homoglyph-only`: that gate is about scripts, and mixed-script deny entries are caught there as
 HOMOGLYPH anyway.
 
@@ -74,6 +76,10 @@ MASK_PATTERNS = [
     re.compile(r"`[^`\n]*`"),
     re.compile(r"https?://\S+"),
     re.compile(r"<[^>\n]{1,80}>"),
+    # Textile-код: `@слово@` — каждая заметка в Redmine пишется им, и термин в коде — цитата,
+    # а не проза. Без маски полный прогон даёт находки на цитатах (#15836 п.8). Одинокая `@`
+    # (адрес почты, `@ник`) пары не образует и не маскируется.
+    re.compile(r"@[^@\n]+@"),
     re.compile(r"(?<![\w])(?:~|\.{0,2})?/[\w./-]+"),  # absolute/relative paths
     re.compile(r"(?<![\w])[\w-]+(?:\.[\w-]+)+/[\w./-]+"),  # dir/file.ext, owner/repo.git
     re.compile(r"(?<![\w])[\w.-]*\.[A-Za-z]{1,5}\b"),  # bare filename: лизинга.md, X.php
@@ -235,7 +241,11 @@ def read_deny_file(path):
 
     `сет` is banned jargon, `сети` is an ordinary Russian word: stem matching would ban the
     second with the first, and a false positive here means the gate cries on correct prose.
+    An entry written as `слово*` opts into stem matching for that entry only — the plural of a
+    banned word then reports DENY instead of leaking into SPELLING with a false suggestion
+    (#15836 п.3).
     """
+
     out = set()
     if not path or not os.path.exists(path):
         return out
@@ -256,8 +266,20 @@ def load_deny(extra_files=()):
 
 
 def is_denied(word, deny):
+    """Exact form always; entries ending with `*` also cover the forms of that word.
+
+    The stem is the same crude one the allow list uses (`скиллу`/`скиллов` -> `скилл`), so
+    `ассерт*` catches `ассерты` but not `ассертивность`: prefix matching would have banned the
+    latter, and a false positive here means the gate cries on correct prose.
+    """
     low = word.lower().strip(".,;:!?«»()\"'")
-    return bool(low) and (low in deny or low.replace("ё", "е") in deny)
+    if not low:
+        return False
+    forms = {low, low.replace("ё", "е")}
+    if deny & forms:
+        return True
+    bases = {e[:-1].replace("ё", "е") for e in deny if e.endswith("*") and len(e) > 1}
+    return any(s.replace("ё", "е") in bases for form in forms for s in stem(form)) if bases else False
 
 
 def _blank(match):
