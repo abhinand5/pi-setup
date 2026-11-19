@@ -49,6 +49,20 @@ printf 'лоkalной\n' > "$repo/homoglyph.md"
 "$TOOL" --homoglyph-only "$repo/homoglyph.md" >/dev/null 2>&1 && fail "гомоглиф обязан ловиться"
 rm "$repo/homoglyph.md"
 
+# Escapes are not letters: a Makefile recipe with `\n` before a Cyrillic word is not a homoglyph
+# (#15740 п.1). The false positive forced the db-q recipe to be split into two printf calls
+# (7f34f903d6), i.e. the code was bent to fit the checker.
+#
+# Literal backslash-n, not a newline: `printf '…%%s\nветка'` converts the escape, and the file then
+# holds no `\n` at all — the first version of this test was green before and after any fix.
+printf '%s\n' 'дерево: %s\nветка: %s' > "$repo/recipe.txt"
+grep -q '\\nветка' "$repo/recipe.txt" || fail "фикстура не содержит литеральный \\n перед кириллицей"
+"$TOOL" --homoglyph-only "$repo/recipe.txt" >/dev/null 2>&1 || fail "\n перед кириллицей — не гомоглиф"
+# …and a real glued Latin letter stays red, otherwise the rule above would hide the error class.
+printf 'nветка\n' > "$repo/glued.md"
+"$TOOL" --homoglyph-only "$repo/glued.md" >/dev/null 2>&1 && fail "латинская n внутри слова обязана ловиться"
+rm "$repo/recipe.txt" "$repo/glued.md"
+
 # `--add` inside a repository writes the committed file, not the personal one.
 (cd "$repo" && "$TOOL" --add новослово >/dev/null) || fail "--add упал"
 grep -qx 'новослово' "$repo/.ru-spellcheck-allow" || fail "--add не дописал .ru-spellcheck-allow"

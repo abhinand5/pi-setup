@@ -175,6 +175,13 @@ fi
 if command -v git >/dev/null 2>&1; then
   clone="$(mktemp -d)/clone"
   if git clone -q --no-hardlinks "$ROOT" "$clone" 2>/dev/null; then
+    # sync.sh commits inside the clone, and a CI runner has no global git identity (empty GECOS):
+    # the first run after `home/` dotfiles landed died with "empty ident name" - "sync.sh failed
+    # in the clone". Set the identity locally in the throwaway clone; the machine's global config
+    # is not part of this test.
+    git -C "$clone" config user.email test@example.invalid
+    git -C "$clone" config user.name test
+
     # The test runs against the working tree, which may carry uncommitted changes to the
     # very scripts under test; copy them over the clone so the assertion tests this code.
     cp "$ROOT/sync.sh" "$ROOT/install.sh" "$clone/"

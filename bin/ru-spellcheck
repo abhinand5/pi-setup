@@ -66,6 +66,10 @@ MAX_SHORT_WORDS = 500
 WORD = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]+")
 
 MASK_PATTERNS = [
+    # Escape-последовательности — не буквы (#15740 п.1): в рецепте Makefile `printf '…%s\nветка'`
+    # литеральный `\n` стоит перед кириллицей, и без маски латинская `n` приклеивалась к слову:
+    # гейт "без ложных срабатываний" валил корректный код, и рецепт подстраивали под проверку.
+    re.compile(r"\\(?:[nrtvfbae'\"\\/]|x[0-9A-Fa-f]{2}|[0-7]{1,3})"),
     re.compile(r"```.*?```", re.S),
     re.compile(r"`[^`\n]*`"),
     re.compile(r"https?://\S+"),
@@ -105,8 +109,12 @@ def need_enchant():
             and (in_venv or os.path.realpath(sys.executable) != os.path.realpath(SYSTEM_PY))):
         os.environ["RU_SPELLCHECK_REEXEC"] = "1"
         os.execv(SYSTEM_PY, [SYSTEM_PY, os.path.abspath(__file__)] + sys.argv[1:])
-    sys.exit("ru-spellcheck: python3-enchant not installed (venv python3 shadowed the system one; "
-             f"try {SYSTEM_PY})")
+    # Код 2, а не 1: 1 — это находки (штатный красный), а тесты и гейты трактуют 2 как
+    # «среда не готова → SKIP» (#15742 п.2). Со строкой в sys.exit код был бы 1 и тест
+    # без enchant падал бы вместо пропуска.
+    print("ru-spellcheck: python3-enchant not installed (venv python3 shadowed the system one; "
+          f"try {SYSTEM_PY})", file=sys.stderr)
+    sys.exit(2)
 
 
 def load_dict():
@@ -119,7 +127,8 @@ def load_dict():
                 return d
         except Exception:
             continue
-    sys.exit("ru-spellcheck: no Russian hunspell dictionary (apt install hunspell-ru)")
+    print("ru-spellcheck: no Russian hunspell dictionary (apt install hunspell-ru)", file=sys.stderr)
+    sys.exit(2)
 
 
 def stem(w):

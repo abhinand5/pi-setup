@@ -1,0 +1,99 @@
+# Гейтрейл pi-setup (#15742 п.2).
+#
+# Зачем: тесты в `tests/` не запускал никто — `tests/docker-e2e.sh` и `tests/ru-spellcheck-repo-dict.sh`
+# лежали файлами. Ветку PR создавали от текущей ветки другой задачи (fix/15675-rg-wrapper), и в PR #6
+# уехал бы чужой коммит; это ловилось чтением `git log --oneline -3` перед публикацией.
+#
+# `tests/docker-e2e.sh` остаётся вне CI намеренно: он гоняет полный install в контейнере, минуты и Docker.
+# Здесь — быстрые проверки: синтаксис helper-ов, правила сторожей (node --test), скриптовые тесты
+# ru-spellcheck и база PR-ветки.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      # Голова PR, а не merge-коммит: `refs/pull/N/merge` содержит базу по построению, и проверка
+      # «ветка от origin/main» на нём зелёная всегда — ровно тот случай, ради которого она писалась.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Словарь ru_RU и python3-enchant — зависимости ru-spellcheck: без enchant инструмент выходит
+      # с кодом 2, и тесты уходят в SKIP (код 77), а не падают.
+      - name: Install hunspell ru_RU and python3-enchant
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq hunspell hunspell-ru python3-enchant
+
+      # Только bash-файлы: `bin/ru-spellcheck` — python, и `bash -n` по нему падает всегда
+      # («syntax error near unexpected token `('»), то есть гейт был бы красным на собственной ветке.
+      - name: Bash syntax — helpers and scripts
+        run: |
+          status=0
+          while IFS= read -r file; do
+            head -1 "$file" | grep -qE '^#!.*\b(ba)?sh\b' || continue
+            bash -n "$file" || status=1
+          done < <(printf '%s\n' bin/* *.sh tests/*.sh)
+          exit "$status"
+
+      - name: ru-spellcheck compiles
+        run: python3 -m py_compile bin/ru-spellcheck
+
+      # --experimental-strip-types нужен, чтобы тест грузил сами `.ts` расширения: `node --check`
+      # на них возвращает 0 даже при дубле объявления, и мёртвый сторож проходил бы зелёным.
+      - name: Guard rules and extension loading (node --test)
+        run: node --experimental-strip-types --test tests/*.test.mjs
+
+      # Личность git для тестов, которые коммитят: на ubuntu-24.04 в /etc/gitconfig лежит только
+      # `[safe] directory = *`, `sync.sh` в клоне падает на «unable to auto-detect email address».
+      - name: Git identity for commit tests
+        run: |
+          git config --global user.name "pi-setup CI"
+          git config --global user.email "pi-setup@example.invalid"
+
+      - name: Script tests (ru-spellcheck, prek guard, uat login)
+        run: |
+          status=0
+          for test in tests/*.sh; do
+            # docker-e2e поднимает контейнер и гоняет полный install: намеренно вне CI.
+            if [ "$test" = "tests/docker-e2e.sh" ]; then continue; fi
+            echo "== $test"
+            bash "$test" && continue
+            rc=$?
+            # 77 — «не хватает инструмента», это пропуск, а не провал.
+            [ "$rc" -eq 77 ] && { echo "   SKIP (77)"; continue; }
+            status=1
+          done
+          exit "$status"
+
+      # База ветки: ветка от чужой задачи приносит в PR чужие коммиты (#15742 п.2).
+      # Проверяется только на pull_request: на push в main сравнивать не с чем.
+      - name: PR branch is based on its base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          base="origin/${{ github.event.pull_request.base.ref }}"
+          git fetch -q origin "${{ github.event.pull_request.base.ref }}"
+          if ! git merge-base --is-ancestor "$base" HEAD; then
+            echo "Ветка не содержит ${base} в истории: пересоздайте её от ${base}." >&2
+            echo "Проверка: git merge-base --is-ancestor ${base} HEAD" >&2
+            exit 1
+          fi
+          echo "Коммитов сверх ${base}: $(git rev-list --count "$base"..HEAD)"
