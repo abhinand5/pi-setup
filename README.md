@@ -354,6 +354,10 @@ This repo currently includes these Pi customizations.
 ### Tool safety
 
 - `extensions/path-guard.ts` blocks `write`/`edit` calls whose `path` carries shell metacharacters (`>`, `|`, `;`, `` ` ``, `$(…)`, globs) or points outside cwd, `$HOME` and `/tmp`. A path is not a command: `/home/denis/work 2>/dev/null` once created the directory `/home/denis/work 2>` in the home directory, and it stayed unnoticed for twenty tool calls (#15723 п.5). The rules live in `extensions/path-guard-core.mjs` (no Pi API), so they are testable without a session: `node --test tests/path-guard.test.mjs`.
+  Two more rules guard "written to the wrong place" (#15820):
+  - *homoglyph twin* — the first path level that does not exist yet is compared char by char with its existing siblings through a Cyrillic→Latin lookalike table (`п` is both `p` and `n`). A twin is refused and named: `write` with `/home/denis/п/p/pi-setup-wt/…` once created four levels of directories next to `/home/denis/p` (#15743 п.1). Case-only differences (`P` next to `p`) are not a twin on purpose — they are legal on case-sensitive filesystems;
+  - *main tree write* — with the session inside a worktree, a path that points into the repository but outside that worktree is refused: the edit would land in the main checkout, where nothing commits it. Two layouts are recognized: `<repo>/.claude/worktrees/<name>` (msb-lk) and `<repo>-wt/<name>` (pi-setup); any other worktree layout is not covered. The check is lexical, so writing to the shared `vendor`/`.env` symlinks of a worktree still passes.
+  Both rules can be bypassed deliberately: `PI_PATH_GUARD_ALLOW_TWIN=1`, `PI_PATH_GUARD_ALLOW_MAIN_TREE=1`.
 
 ### Commands added by extensions
 
