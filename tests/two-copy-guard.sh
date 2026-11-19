@@ -24,6 +24,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 clone="$WORK/clone"
 git clone -q --no-hardlinks "$ROOT" "$clone"
 cp "$ROOT"/install.sh "$ROOT"/sync.sh "$clone"/
+# Идентичность — в самом клоне: тест подменяет HOME, и глобальный ~/.gitconfig (свой или CI-шный)
+# ему не виден, а sync.sh в шаге (6) коммитит.
+git -C "$clone" config user.email "two-copy-guard@example.invalid"
+git -C "$clone" config user.name "two-copy guard test"
 mkdir -p "$clone/scripts/lib"
 cp "$ROOT"/scripts/lib/two-copy-guard.sh "$clone/scripts/lib/"
 
@@ -90,6 +94,6 @@ grep -q "two-copy guard" "$err" || fail "sync-отказ не назвал ст�
 # (6) Гейт снимается осознанно.
 env HOME="$home" PI_HOME="$pi_home" XDG_CONFIG_HOME="$home/.config" \
   PI_SETUP_TWO_COPY_GUARD=0 bash "$clone/sync.sh" --no-push --all-skills >"$WORK/sync6.out" 2>&1 \
-  || fail "PI_SETUP_TWO_COPY_GUARD=0 не снял гейт"
+  || fail "PI_SETUP_TWO_COPY_GUARD=0 не снял гейт: $(cat "$WORK/sync6.out")"
 
 echo "OK: сторож двух копий отказывает на обе стороны, --force и PI_SETUP_TWO_COPY_GUARD=0 работают, dry-run считает строки"
