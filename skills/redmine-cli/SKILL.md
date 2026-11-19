@@ -52,6 +52,7 @@ bash /tmp/redmine-install.sh
 - Parse programmatically with **`-o json`** (stdout only); use `jq`, not ad-hoc regex/Python.
 - Default list limit is 100; use **`--limit 0`** for all rows.
 - Name flags (`--project`, `--tracker`, `--status`, `--priority`, …) resolve by name; **`--assignee` по имени на этом сервере падает** — только числовой id или `me` (= текущий пользователь), см. [Ловушки](#verified-flags-cli-v2110).
+- `redmine-file` — обёртка над `redmine`, не второй бинарь: её флаги `--description-file` / `--note-file` **не видны в `--help`** (обёртка передаёт `--help` в `redmine` и своих флагов не показывает), поэтому `--help | grep description-file` даёт 0 — это не отсутствие флага, см. [Длинный текст](#длинный-текст--обёрткой-redmine-file).
 - `issues list` defaults to **open**; use `--status closed`, `--status "*"`, or a status name.
 - `issues update` sends **only** flags you pass.
 - Dates: `--due-date`, `--from`, `--to` accept literal `today`.
@@ -255,10 +256,11 @@ redmine-file issues create --project "МСБ-лизинг" --parent 15598 --subj
 redmine-file issues update 15705 --note-file /tmp/note.txt [--private-notes]
 ```
 
-Флаги обёртки — `--description-file` и `--note-file` (в том числе в форме `--flag=путь`). На `--help`
-обёртка печатает свой блок **в stderr** и передаёт вызов в `redmine`; в stdout-пайп эти строки не
-попадают, поэтому `redmine-file issues create --help | grep description-file` по-прежнему даёт 0 — это
-не отсутствие флага (#15705 п.4).
+Флаги обёртки — `--description-file` и `--note-file` (в том числе в форме `--flag=путь`). `--help` она не
+перехватывает: дописывает путь и передаёт вызов в `redmine`, поэтому `redmine-file issues create --help`
+печатает справку `redmine` (замер 19.11.2026: stdout 2603 байта, stderr пуст), и своих флагов в ней нет —
+`grep description-file` даёт 0 в обоих потоках. Это не отсутствие флага (#15705 п.4); источник правды об
+обёртке — её текст, `~/p/pi-setup/bin/redmine-file`.
 
 ### Verify that an update landed (canonical read)
 
