@@ -132,6 +132,17 @@ git worktree add -q ../pi-setup-wt/<задача>-<слаг> -b <тип>/<зад
 - `author` / `mergedBy` / `mergedAt` подтверждают учётную запись, а не человека: кто именно
   смержил — из истории сессии. Автор PR не меняется: ошибочный PR закрыть с пояснением и
   пересоздать от личной учётки (ветка и коммиты те же).
+- **Тело PR — через `gh api`, а не `gh pr edit`.** На этом сервере `gh pr edit <n> --body-file …` падает на
+  `GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience` с кодом 1, и
+  тело не меняется; повторная разведка того же обхода стоила двух лишних вызовов (#15834 п.4). Рабочий
+  путь — REST:
+
+  ```bash
+  python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
+  gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+  ```
+
+  `--add-label` / `--remove-label` в `gh pr edit` работают — падает именно правка тела.
 - Перед публикацией — `gh auth status` → `denis-trofimov`; токены не печатать в чат, логи и файлы.
 
 # Прокси и внутренние хосты

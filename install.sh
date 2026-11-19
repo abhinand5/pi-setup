@@ -49,6 +49,7 @@ BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 COPY_CONFIG=0
 RESTORE=0
 DRY_RUN=0
+FORCE=0
 BACKUP=0
 BACKUP_DIR=""
 REVERT_DIR=""
@@ -79,6 +80,8 @@ Options:
   --backup        Back up current live Pi files before restore/config overwrite.
   --no-backup     Explicitly skip backup prompts/policy; useful in scripts.
   --revert DIR    Restore extensions/themes/skills/settings/mcp from a backup dir.
+  --force         Overwrite a live copy that has edits of its own (the two-copy guard refuses
+                  such a write: run ./sync.sh to bring them into the repo instead).
 
 Browser automation (playwright MCP) is checked but never installed automatically.
 If prerequisites are missing, install.sh only prints the commands to run.
@@ -102,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --force)
+      FORCE=1
       shift
       ;;
     --backup)
@@ -128,6 +135,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Сторож двух копий: файл, у которого есть свои правки в живой копии, без --force валит restore
+# с diff-ом, а не теряется молча (#15838 п.7).
+# shellcheck source=scripts/lib/two-copy-guard.sh
+source "$ROOT/scripts/lib/two-copy-guard.sh"
+
+# diff_lines <repo-копия> <живая>: сколько строк разошлось — одной строкой в предупреждение.
+diff_lines() {
+  local a d _
+  while read -r a d _; do
+    printf '+%s −%s строк' "$a" "$d"
+    return 0
+  done < <(git -C "$ROOT" diff --numstat --no-index -- "$1" "$2" 2>/dev/null || true)
+  printf 'размер не посчитан'
+}
+
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
     printf 'would run: '
@@ -148,6 +170,27 @@ copy_path() {
     run cp "$src" "$dst"
   fi
 }
+
+# Сторож двух копий идёт до первой записи: живая копия может нести собственные правки, и restore
+# перезаписал бы их молча (#15836 п.2, #15838 п.7).
+# --revert пишет из каталога бэкапа, а не из репозитория: две копии тут не при чём.
+if [[ -z "$REVERT_DIR" && ( "$RESTORE" == "1" || "$COPY_CONFIG" == "1" ) ]]; then
+  # Сверяем только то, что этот запуск действительно пишет: --restore не трогает AGENTS.md и
+  # ~/.tmux.conf, --copy-config не трогает skills/themes/extensions.
+  if [[ "$RESTORE" == "1" && "$COPY_CONFIG" == "1" ]]; then
+    dg_mode=all
+  elif [[ "$RESTORE" == "1" ]]; then
+    dg_mode=restore
+  else
+    dg_mode=copy-config
+  fi
+  dg_standard_pairs live "$dg_mode"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dg_report dry-run
+  else
+    dg_report install "two-copy guard: перенесите правку в репозиторий (./sync.sh) или перезапишите осознанно: --force"
+  fi
+fi
 
 copy_dir_contents() {
   local src="$1"
@@ -173,7 +216,7 @@ install_config_if_absent() {
     if cmp -s "$src" "$dst"; then
       echo "$label is up to date."
     else
-      echo "$label differs from the repo copy; leaving it (use --restore --copy-config to overwrite)."
+      echo "$label differs from the repo copy ($(diff_lines "$src" "$dst")); leaving it (use --restore --copy-config to overwrite)."
     fi
     return 0
   fi
@@ -848,7 +891,7 @@ install_home_dotfiles() {
       elif cmp -s "$src" "$dst"; then
         echo "$dst is up to date."
       else
-        echo "$dst differs from the repo copy; leaving it (use --copy-config to overwrite)."
+        echo "$dst differs from the repo copy ($(diff_lines "$src" "$dst")); leaving it (use --copy-config to overwrite)."
       fi
       continue
     fi

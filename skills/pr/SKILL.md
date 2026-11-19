@@ -9,6 +9,19 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
+## Editing the body of an existing PR
+
+`gh pr edit <n> --body-file …` is not a reliable path here: on a repository whose GraphQL surface still
+carries classic Projects it fails with `GraphQL: Projects (classic) is being deprecated in favor of the
+new Projects experience`, exits 1, and leaves the body untouched (#15834 п.4). Use the REST endpoint:
+
+```bash
+python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
+gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+```
+
+`gh pr edit --add-label` / `--remove-label` work — it is the body edit that breaks.
+
 Use this template for writing the PR body:
 
 ```markdown

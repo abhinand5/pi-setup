@@ -62,11 +62,11 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 - `bin/ru-spellcheck` — deterministic Russian prose checker (homoglyphs + hunspell `ru_RU`)
   - `--homoglyph-only` flags Latin letters inside Cyrillic words (`лоkalной`, `восстанóвленное`, `обéих`) with no dictionary and no false positives; the full run also reports words missing from `ru_RU` with suggestions
   - the gate is meant for short prose: an input longer than 40 lines or 500 tokens exits 3 and asks for the full run, because vowel reduction (`сесии`, `велечину`, `скрыпт`) is invisible without the dictionary; `--allow-long` bypasses that on purpose (#15799 п.2)
-  - code spans, fenced blocks, URLs, paths, and filenames are masked, so identifiers are never flagged
+  - code spans, fenced blocks, Textile `@code@` (every Redmine note is written in Textile), URLs, paths, and filenames are masked, so identifiers and quoted terms are never flagged
   - `--add СЛОВО` inside a repository grows that repository's own `.ru-spellcheck-allow` (committed with the code, found upwards from the checked file, applied on top of the personal list); `--add-personal` keeps the machine-wide `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`, which the repo ships as a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
   - `tests/ru-spellcheck-repo-dict.sh` checks the project dictionary and both `--add` targets on a throwaway repository; `tests/ru-spellcheck-long-input.sh` checks the long-input refusal (exit 3), the short-text gate and `--allow-long`; `tests/ru-spellcheck-deny-list.sh` checks the denylist (priority over allow, exact word form, `--add` refusal, project `.ru-spellcheck-deny`)
   - `prek.toml` (installed by `./install.sh` when `prek` is on PATH) carries one policy hook: `deny-list-guard` refuses a commit that stages `config/ru-spellcheck/deny.txt`. `path-guard` only sees `write`/`edit`, so a `bash` rewrite in the same session used to slip past it (#15820); the commit is where the file starts travelling to `main` and to other machines. Deliberate edits pass with `SKIP=deny-list-guard git commit …` or `PI_ALLOW_DENY_LIST_CHANGE=1`, and the reason belongs in the commit message. Two builtin hooks (`trailing-whitespace`, `end-of-file-fixer`) sit next to it mostly so `SKIP=` leaves something to run: prek 0.4.3 fails with "No hooks found after filtering" when the skip empties the list
-  - the denylist `config/ru-spellcheck/deny.txt` is the opposite of the allowlist and belongs to a human: a denylisted word is always a finding, even when spelled correctly or sitting in an allowlist, and `--add` refuses it. Restore **overwrites** the live `~/.config/ru-spellcheck/deny.txt` from the repo (unlike the allowlist, which is seeded only when absent): a session that could grow the deny list would un-ban its own invented vocabulary. `path-guard` additionally refuses `write`/`edit` on any `ru-spellcheck/deny.txt` and on `.ru-spellcheck-deny` (`PI_PATH_GUARD_ALLOW_DENY_LIST=1` bypasses it)
+  - the denylist `config/ru-spellcheck/deny.txt` is the opposite of the allowlist and belongs to a human: a denylisted word is always a finding, even when spelled correctly or sitting in an allowlist, and `--add` refuses it. Entries are exact word forms; write `слово*` to cover plural forms of that word (`ассерт*` catches `ассерты` but not `ассертивность`) — the star reuses the same crude stem the allowlist uses, so it needs four letters to bite and short words stay without it. Restore **overwrites** the live `~/.config/ru-spellcheck/deny.txt` from the repo (unlike the allowlist, which is seeded only when absent): a session that could grow the deny list would un-ban its own invented vocabulary. `path-guard` additionally refuses `write`/`edit` on any `ru-spellcheck/deny.txt` and on `.ru-spellcheck-deny` (`PI_PATH_GUARD_ALLOW_DENY_LIST=1` bypasses it)
   - needs `python3-enchant` and `hunspell-ru` for the full run; `--homoglyph-only` needs neither, so it also works under a project venv that shadows `python3`
   - exit 1 on findings, so it can gate a publish step; exit 3 is the "input too long for the homoglyph gate" refusal
 - `bin/pi-models-check` — probes `subagents.modelScope.allow` against the provider
@@ -357,7 +357,17 @@ tests/ru-spellcheck-deny-list.sh     # denylist: priority over allow, exact form
 tests/ru-spellcheck-repo-dict.sh     # project .ru-spellcheck-allow and both --add targets
 tests/ru-spellcheck-long-input.sh    # long-input refusal (exit 3) and --allow-long
 tests/prek-deny-list-guard.sh        # commit hook: denylist edit blocked, SKIP and env bypass pass
+tests/two-copy-guard.sh              # sync/install refuse to overwrite a copy that has edits of its own
 ```
+
+Files that live in two copies — `skills/`, `config/AGENTS.md`, the spellcheck dictionaries — go through
+the two-copy guard (`scripts/lib/two-copy-guard.sh`): `./sync.sh --dry-run` prints `diff` line counts per
+file, and both `./sync.sh` and `./install.sh` (`--restore`, `--copy-config`) refuse with a non-zero exit
+when the copy they are about to overwrite carries its own edits. Each run compares only the pairs it
+writes: `--restore` never touches `AGENTS.md` or `~/.tmux.conf`, and `--copy-config` never touches
+`skills/`. `~/.tmux.conf` and the live dotfiles are reported but never refused — that write keeps a
+`.bak` next to it, and the denylist is repo policy, overwritten on purpose. `--force` overwrites
+deliberately; `PI_SETUP_TWO_COPY_GUARD=0` turns the guard off for one run.
 
 Testing anything that writes outside the repo (`install.sh`, `sync.sh`, `uninstall.sh`) needs a
 throwaway `$HOME` and, for the sync case, a `git clone` — never a `cp -a` of a worktree, whose

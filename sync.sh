@@ -10,6 +10,7 @@ set -euo pipefail
 #   ./sync.sh --all-skills
 #   ./sync.sh --skills hf-cli,diagnosing-bugs
 #   ./sync.sh --prune-skills
+#   ./sync.sh --force          # перезаписать копию репозитория, у которой есть свои правки
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do
@@ -21,6 +22,11 @@ ROOT="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 PI_HOME="${PI_HOME:-$HOME/.pi/agent}"
 PUSH=1
 DRY_RUN=0
+FORCE=0
+# Сторож двух копий: файл, у которого есть свои правки на стороне, которую мы собираемся
+# перезаписать, без --force валит прогон с diff-ом (#15838 п.7).
+# shellcheck source=scripts/lib/two-copy-guard.sh
+source "$ROOT/scripts/lib/two-copy-guard.sh"
 SKILLS_MODE="prompt"
 SKILLS_FILTER=""
 PRUNE_SKILLS=0
@@ -34,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --force)
+      FORCE=1
       shift
       ;;
     --all-skills)
@@ -592,11 +602,22 @@ PY
 
 cd "$ROOT"
 
+# Сторож идёт до первой записи: перечислить пары, показать реальные расхождения и решить,
+# можно ли перезаписывать (#15836 п.2, #15838 п.7). Раньше --dry-run печатал множество
+# управляемых путей — по нему нельзя было понять, что именно разошлось.
+dg_standard_pairs repo sync
+
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/session-logs.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt, home/"
+  echo "Dry run: sync from $PI_HOME into $ROOT"
+  if [[ -n "${DG_ITEMS[@]+x}" ]]; then
+    dg_report dry-run
+  else
+    echo "nothing diverged: живая копия и репозиторий совпадают"
+  fi
   exit 0
 fi
+
+dg_report sync
 
 select_skills
 
