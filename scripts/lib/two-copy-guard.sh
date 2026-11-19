@@ -109,10 +109,13 @@ dg_standard_pairs() {
     # dotfiles restore keeps a .bak рядом, поэтому здесь сторож только показывает расхождение.
     dg_compare_tree "$HOME" "$ROOT/home" "$([[ "$target" == "live" ]] && echo report || echo "$target")"
   fi
-  # allow.txt живёт в двух копиях и синхронизируется (`--add-personal` пишет в живую).
-  # deny.txt — нет: это политика репозитория, install перезаписывает её всегда, а sync её не
-  # копирует вовсе (README: «Restore overwrites the live deny.txt from the repo»).
-  dg_compare "$cfg/ru-spellcheck/allow.txt" "$ROOT/config/ru-spellcheck/allow.txt" "$target"
+  # allow.txt течёт в одну сторону: `--add-personal` пишет в живую копию, и `sync.sh` забирает её в
+  # репозиторий. install её не перезаписывает вовсе (только сеет, когда живой нет) — поэтому
+  # сравнивать её при установке нечего, иначе живой словарь с личными словами валил бы каждый restore.
+  # deny.txt — политика репозитория: install перезаписывает её всегда, sync не копирует вовсе.
+  [[ "$mode" == "sync" ]] \
+    && dg_compare "$cfg/ru-spellcheck/allow.txt" "$ROOT/config/ru-spellcheck/allow.txt" "$target"
+  return 0
 }
 
 # dg_report <mode> [refusal-text]: one `diff --stat` per diverged pair (a dry run is read as a report),
