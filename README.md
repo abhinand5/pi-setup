@@ -49,6 +49,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 | Voice dictation | Micme wired to the local [Handy](https://handy.computer) CLI — `alt+m` to dictate, no cloud STT, no API key |
 | Browser automation | Playwright MCP server for interactive UAT on a private Xvfb display (no focus stealing), with a `browser-uat` skill and `uat.sh` environment CLI |
 | Themes | `nebula-pulse`, `opencode`, `tokyo-night`, `one-dark-pro`, and more |
+| tmux | `home/.tmux.conf` — mouse, truecolor through panes, kitty-graphics passthrough, extended keys |
 | Skills | Portable backups of installed Pi/agent skills |
 | Smoke test | Docker restore/sync contract test in `tests/docker-e2e.sh` |
 | Guard rules test | `node --test tests/path-guard.test.mjs` — правила блокировки путей в `write`/`edit` без запуска Pi |
@@ -158,9 +159,9 @@ Useful installer options:
 
 `--restore` copies repo resources into `~/.pi/agent/extensions`, `~/.pi/agent/themes`, and `~/.pi/agent/skills`.
 
-`--copy-config` copies `config/settings.example.json`, `config/mcp.example.json`, and `config/micme.example.json` into `~/.pi/agent/`, and merges `config/vscode-keybindings.json` into the VS Code user `keybindings.json` (existing entries and comments are preserved; a `.bak-<timestamp>` copy is written first).
+`--copy-config` copies `config/settings.example.json`, `config/mcp.example.json`, and `config/micme.example.json` into `~/.pi/agent/`, copies the `home/` dotfiles (`home/.tmux.conf` → `~/.tmux.conf`), and merges `config/vscode-keybindings.json` into the VS Code user `keybindings.json` (existing entries and comments are preserved; a `.bak-<timestamp>` copy is written first). A dotfile that differs from the repo copy gets the same `.bak-<timestamp>` treatment before it is overwritten, even without `--backup`.
 
-`--backup` saves current `extensions`, `themes`, `skills`, `settings.json`, and `mcp.json` under `~/.pi/agent/backups/pi-setup-*` before replacing anything. Revert with the exact command printed at the end of install.
+`--backup` saves current `extensions`, `themes`, `skills`, `settings.json`, and `mcp.json` under `~/.pi/agent/backups/pi-setup-*` before replacing anything; with `--copy-config` it also records the pre-install state of every `home/` dotfile in `home-manifest.txt`, which is what `--revert` reads. Revert with the exact command printed at the end of install.
 
 The example settings pin the startup model with `defaultProvider` + `defaultModel` (both are required — `defaultModel` is the bare model id, not `provider/model`). If that provider is not configured on your machine, Pi falls back to the first authenticated model. `enabledModels` is intentionally **not** included: those patterns are machine-specific and can produce noisy "No models match pattern" warnings for anyone restoring this repo before configuring their own providers.
 
@@ -190,6 +191,8 @@ Warnings:
 
 - `--restore` replaces the current contents of those live resource directories.
 - `--copy-config` overwrites `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json`, and merges (does not overwrite) `~/.pi/agent/models.json`.
+- `--copy-config` is also the only step that writes `~/.tmux.conf`; a plain `./install.sh` reports the difference and leaves the
+  live file alone. `--revert` restores it, or deletes it again when the backup recorded that it did not exist.
 - `--restore` also copies `~/.pi/agent/AGENTS.md` and `~/.pi/agent/pi-pstack-adapter.json` when they are absent; add `--copy-config` to overwrite them. Without `--restore` neither file is touched.
 - `--copy-config` only *adds* missing VS Code keybindings; it never rewrites or removes existing ones. Set `VSCODE_KEYBINDINGS=/path/to/keybindings.json` to target a non-default location (e.g. VS Code Insiders or a profile).
 - Use `--dry-run` first if you only want to preview the restore.
@@ -270,7 +273,7 @@ Then use it from anywhere:
 pi-setup-sync
 ```
 
-`pi-setup-sync` copies current `~/.pi/agent/extensions`, `~/.pi/agent/themes`, selected skills, `settings.json`, `mcp.json`, `micme.json`, `AGENTS.md`, and `pi-pstack-adapter.json` into this repo, validates JSON/theme tokens, commits, and pushes. It strips any self-referential package entry that would make Pi load this `pi-setup` repo at startup.
+`pi-setup-sync` copies current `~/.pi/agent/extensions`, `~/.pi/agent/themes`, selected skills, `settings.json`, `mcp.json`, `micme.json`, `AGENTS.md`, and `pi-pstack-adapter.json` into this repo, validates JSON/theme tokens, commits, and pushes. It also copies back each dotfile already tracked under `home/` (today just `.tmux.conf`) from `$HOME`, so a hand-edited tmux config travels with the repo. It strips any self-referential package entry that would make Pi load this `pi-setup` repo at startup.
 
 Two transforms keep the examples portable and honest:
 
@@ -720,6 +723,45 @@ integrated terminal reserves some before Pi sees them. Two consequences worth kn
 
 Verify what Pi actually receives with `/hotkeys` (registered shortcuts) and by pressing
 the key: a working `ctrl+alt+d` toggles the `Δ N files (+x/-y)` line.
+
+## tmux configuration
+
+`home/` is a `$HOME` mirror for dotfiles that are not Pi config; today it holds one file. That is why the tmux config is
+not in `config/`: that directory holds Pi's own templates (`vscode-keybindings.json` is the only exception, because the
+merge step needs the snippet next to the settings it belongs to).
+
+```bash
+./install.sh --copy-config    # copies home/.tmux.conf -> ~/.tmux.conf
+```
+
+A plain `./install.sh` never touches it — `~/.tmux.conf` is not Pi's, so the only step
+allowed to overwrite it is `--copy-config`, the same gate that overwrites
+`~/.pi/agent/settings.json`. With `--backup` the previous file is saved under
+`<backup>/home/` and `--revert` puts it back (removing `~/.tmux.conf` again if it did not
+exist before). `./sync.sh` copies the live `~/.tmux.conf` back into `home/`; files are
+captured only if the repo already tracks them, so a stray `~/.bashrc` is never swept in.
+`./uninstall.sh` removes `~/.tmux.conf` only when it is still byte-identical to the repo
+copy.
+
+`tests/home-dotfiles.sh` covers that contract against throwaway `$HOME` directories — no
+Docker, no network: plain install leaves the file alone, `--copy-config` keeps a `.bak`
+before overwriting, `--backup` + `--revert` restore it (or delete what install created),
+`--backup` without `--copy-config` records nothing, `uninstall.sh` keeps a modified copy,
+and `sync.sh` commits a tracked dotfile while ignoring an untracked one.
+
+What the config actually does (tmux 3.4, validated on a throwaway server before it landed
+in the live one):
+
+| Setting | Why |
+| --- | --- |
+| `set -g mouse on` | Replaces the four `mode-mouse` / `mouse-select-pane` / `mouse-resize-pane` / `mouse-select-window` options that tmux removed in 2.1 and that fail with `invalid option` on any current tmux. Click focuses a pane, click on the status bar switches windows, dragging a border resizes, wheel goes to the app when it asked for mouse (`less --mouse`, `vim set mouse=a`) and to copy-mode otherwise. `Shift`+drag is the escape hatch for the terminal's own selection, which mouse mode takes over |
+| `set -g default-terminal "tmux-256color"` | `screen-256color` caps a pane at 256 colours. Panes created before the change keep their old `$TERM` until the server restarts |
+| `set -as terminal-features 'xterm-kitty:RGB'` | Truecolor through the pane (needs the `tmux-256color` terminfo, present on Debian/Ubuntu via `ncurses-term`) |
+| `set -as terminal-features 'xterm-kitty:extkeys'` + `set -g extended-keys on` | Pi's modified keys. tmux 3.4 has no CSI-u support, so it falls back to `modifyOtherKeys` and kitty prints a `PARSE ERROR … superseded by the kitty keyboard protocol` line — harmless, and tmux 3.5+ drops it |
+| `set -g allow-passthrough on` | Kitty graphics (inline images) survive tmux |
+| `bind -r m resize-pane -Z` | Zoom toggle; the old `tmp`-window swap trick loses the layout and is unnecessary since tmux 1.8 |
+| `setw -g monitor-activity on` + `set -g visual-activity on` | Activity alerts in the status bar |
+| `set -g status-justify centre` | Centre the window list. `center` is rejected as an unknown value; `absolute-centre` (3.2+) centres it against the terminal, not the status line |
 
 ## Do not commit
 

@@ -594,7 +594,7 @@ cd "$ROOT"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Dry run: would sync from $PI_HOME into $ROOT"
-  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/session-logs.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt"
+  echo "Files that may change: extensions/, themes/, skills/, config/settings.example.json, config/mcp.example.json, config/micme.example.json, config/models.example.json, config/AGENTS.md, config/delegation-models.md, config/session-logs.md, config/pi-pstack-adapter.example.json, config/ru-spellcheck/allow.txt, home/"
   exit 0
 fi
 
@@ -633,6 +633,27 @@ if [[ -f "$spellcheck_allow" ]]; then
   cp "$spellcheck_allow" "$ROOT/config/ru-spellcheck/allow.txt"
 fi
 
+# Non-Pi dotfiles: the live copy under $HOME is the source of truth, mirrored into home/ so a
+# restore can put it back. Selection follows git tracking, not the working tree, because this
+# is the step that commits and pushes: an untracked file sitting in home/ (someone's hand-dropped
+# ~/.netrc) must never ride along into a commit. `cmp -s` also covers a ~/.tmux.conf symlinked
+# into this repo, which plain `cp` refuses as "same file".
+if [[ -d "$ROOT/home" ]]; then
+  while IFS= read -r -d '' tracked; do
+    rel="${tracked#home/}"
+    if [[ -f "$HOME/$rel" ]] && ! cmp -s "$HOME/$rel" "$ROOT/home/$rel"; then
+      cp "$HOME/$rel" "$ROOT/home/$rel"
+    fi
+  done < <(git -C "$ROOT" ls-files -z -- home)
+  # A dotfile dropped into home/ by hand is not tracked yet, so it is neither captured nor
+  # staged. Say so: silence here reads as "captured" the next time someone looks.
+  untracked_home="$(git -C "$ROOT" status --porcelain --untracked-files=all -- home)"
+  if [[ -n "$untracked_home" ]]; then
+    echo "note: untracked files in home/ were left alone (track the dotfile first):"
+    printf '%s\n' "$untracked_home" | sed 's/^/  /'
+  fi
+fi
+
 validate_json "$ROOT/package.json" "$ROOT/config/settings.example.json"
 if [[ -f "$ROOT/config/models.example.json" ]]; then
   validate_json "$ROOT/config/models.example.json"
@@ -652,6 +673,15 @@ validate_themes
 validate_skills
 
 git add bin extensions themes skills config docs tests package.json README.md install.sh uninstall.sh sync.sh setup_sync.sh .gitignore
+
+# home/ is staged file by file from the index instead of with `git add home`: the directory
+# can hold an untracked dotfile (a hand-dropped ~/.netrc), and staging the directory would
+# commit it. Only a dotfile the repo already tracks is ever restaged.
+if [[ -d "$ROOT/home" ]]; then
+  while IFS= read -r -d '' tracked; do
+    git add -- "$tracked"
+  done < <(git -C "$ROOT" ls-files -z -- home)
+fi
 
 if git diff --cached --quiet; then
   echo "No Pi setup changes to sync."
