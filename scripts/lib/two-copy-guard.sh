@@ -41,8 +41,10 @@ dg_compare() {
   # рядом .bak-копию, как и раньше), но расхождение должно быть видно (#15836 п.2).
   [[ "$target" == "report" ]] && return 0
   if [[ "$target" == "live" ]]; then
-    # install: replacing the live copy is safe only while live is still the committed version.
-    dg_matches_head "$rel" "$live" && return 0
+    # install: replacing the live copy is safe while its content is a version the repo had at some
+    # point — that is what a stale live copy is after the repo moved on. Content the repo never held
+    # is a local edit, and overwriting it would lose work.
+    dg_known_in_history "$rel" "$live" && return 0
   else
     # sync: replacing the repo copy is safe only while it carries no uncommitted change.
     git -C "$ROOT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 \
@@ -61,6 +63,19 @@ dg_matches_head() {
   fi
   rm -f "$tmp"
   return 1
+}
+
+# dg_known_in_history <rel-in-repo> <file>: did the repo ever hold this exact content at this path?
+dg_known_in_history() {
+  local want hits
+  want="$(git -C "$ROOT" hash-object -- "$2" 2>/dev/null)" || return 1
+  [[ -n "$want" ]] || return 1
+  # `grep -q` стоит ПОСЛЕ конвейера, а не в нём: он выходит на первом совпадении, апстрим получает
+  # SIGPIPE, и под `set -o pipefail` (оба скрипта) конвейер возвращает провал на верном ответе.
+  hits="$(git -C "$ROOT" log -n 30 --format=%H -- "$1" 2>/dev/null \
+    | sed "s|\$|:$1|" \
+    | git -C "$ROOT" cat-file --batch-check='%(objectname)' 2>/dev/null)" || hits=""
+  [[ -n "$hits" ]] && printf '%s\n' "$hits" | grep -qx "$want"
 }
 
 # dg_compare_tree <live_dir> <repo_dir> [target]: the same for every file present on both sides.
