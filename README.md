@@ -316,6 +316,30 @@ hint: --prune-skills deletes them instead
 
 A locally archived skill (`~/.pi/agent/skills-archive/...`) is therefore safe: it stays in the repo as a backup and is not wiped by a sync from a machine that does not load it. Only `--prune-skills` removes those entries, and it refuses to run when discovery found no local skills at all, so a missing `~/.pi/agent/skills` cannot empty the repo.
 
+### Pull a merged PR into the checkout
+
+After a PR is merged on GitHub, fast-forward the checkout:
+
+```bash
+git fetch origin && git merge --ff-only origin/main
+```
+
+If git refuses with `untracked working tree files would be overwritten`, a file this machine created
+outside the index — often a local config the repo has since started shipping — has exactly the content the
+incoming commit brings. Prove that with `cmp` and remove the local copy instead of checking it out:
+
+```bash
+# silent and exit 0 means the local file is byte-identical to the one in main
+git show origin/main:config/ru-spellcheck/deny.txt | cmp - config/ru-spellcheck/deny.txt
+rm config/ru-spellcheck/deny.txt
+git merge --ff-only origin/main
+```
+
+`cmp` must pass before `rm` deletes anything: only then is the file the same one main carries, and only
+then is losing the local copy harmless. Do not reach for `git checkout -- <path>` in this situation — it
+overwrites the file without that proof, and for an untracked path it either does nothing or checks out the
+incoming content over local edits.
+
 ## Manual tests
 
 The guard rules of `extensions/path-guard.ts` are plain JavaScript (`extensions/path-guard-core.mjs`),
