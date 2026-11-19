@@ -741,6 +741,22 @@ install_bin_helpers() {
 
 install_bin_helpers
 
+# Commit hooks of this repository itself: the deny-list gate must run on `git commit` in the
+# pi-setup checkout (#15820). prek is optional on a target machine, so a missing binary is a note,
+# not a failure — the hook only matters where this checkout is committed to.
+install_repo_hooks() {
+  if [[ ! -f "$ROOT/prek.toml" ]]; then
+    return 0
+  fi
+  if command -v prek >/dev/null 2>&1; then
+    ( cd "$ROOT" && run prek install ) || echo "warning: prek install не прошёл — хуки в $ROOT не активны"
+  else
+    echo "note: prek не найден — хуки коммита в $ROOT остаются выключенными (поставьте prek и повторите)"
+  fi
+}
+
+install_repo_hooks
+
 # ru-spellcheck reads its allow list from XDG config. Seed it from the repo copy
 # only when absent: the live file grows through `ru-spellcheck --add`, and those
 # additions are the point, so a restore must not clobber them.

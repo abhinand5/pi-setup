@@ -64,6 +64,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
   - code spans, fenced blocks, URLs, paths, and filenames are masked, so identifiers are never flagged
   - `--add СЛОВО` inside a repository grows that repository's own `.ru-spellcheck-allow` (committed with the code, found upwards from the checked file, applied on top of the personal list); `--add-personal` keeps the machine-wide `${XDG_CONFIG_HOME:-~/.config}/ru-spellcheck/allow.txt`, which the repo ships as a seed copy in `config/ru-spellcheck/allow.txt` that a restore installs only when absent
   - `tests/ru-spellcheck-repo-dict.sh` checks the project dictionary and both `--add` targets on a throwaway repository; `tests/ru-spellcheck-long-input.sh` checks the long-input refusal (exit 3), the short-text gate and `--allow-long`; `tests/ru-spellcheck-deny-list.sh` checks the denylist (priority over allow, exact word form, `--add` refusal, project `.ru-spellcheck-deny`)
+  - `prek.toml` (installed by `./install.sh` when `prek` is on PATH) carries one policy hook: `deny-list-guard` refuses a commit that stages `config/ru-spellcheck/deny.txt`. `path-guard` only sees `write`/`edit`, so a `bash` rewrite in the same session used to slip past it (#15820); the commit is where the file starts travelling to `main` and to other machines. Deliberate edits pass with `SKIP=deny-list-guard git commit …` or `PI_ALLOW_DENY_LIST_CHANGE=1`, and the reason belongs in the commit message. Two builtin hooks (`trailing-whitespace`, `end-of-file-fixer`) sit next to it mostly so `SKIP=` leaves something to run: prek 0.4.3 fails with "No hooks found after filtering" when the skip empties the list
   - the denylist `config/ru-spellcheck/deny.txt` is the opposite of the allowlist and belongs to a human: a denylisted word is always a finding, even when spelled correctly or sitting in an allowlist, and `--add` refuses it. Restore **overwrites** the live `~/.config/ru-spellcheck/deny.txt` from the repo (unlike the allowlist, which is seeded only when absent): a session that could grow the deny list would un-ban its own invented vocabulary. `path-guard` additionally refuses `write`/`edit` on any `ru-spellcheck/deny.txt` and on `.ru-spellcheck-deny` (`PI_PATH_GUARD_ALLOW_DENY_LIST=1` bypasses it)
   - needs `python3-enchant` and `hunspell-ru` for the full run; `--homoglyph-only` needs neither, so it also works under a project venv that shadows `python3`
   - exit 1 on findings, so it can gate a publish step; exit 3 is the "input too long for the homoglyph gate" refusal
@@ -319,6 +320,16 @@ so they run under the Node test runner without Pi, a model, or a session:
 
 ```bash
 node --test tests/path-guard.test.mjs
+```
+
+The shell tests of the Russian checker run standalone as well (each one skips itself when its tool
+is missing):
+
+```bash
+tests/ru-spellcheck-deny-list.sh     # denylist: priority over allow, exact form, --add refusal
+tests/ru-spellcheck-repo-dict.sh     # project .ru-spellcheck-allow and both --add targets
+tests/ru-spellcheck-long-input.sh    # long-input refusal (exit 3) and --allow-long
+tests/prek-deny-list-guard.sh        # commit hook: denylist edit blocked, SKIP and env bypass pass
 ```
 
 Run the Docker end-to-end smoke test when you want to verify the setup/restore contract without adding CI:

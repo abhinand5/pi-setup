@@ -1,0 +1,31 @@
+# Хуки этого репозитория. Ставит их `install.sh` (`prek install`), прогоняет prek — тот же
+# инструмент, что в рабочих репозиториях.
+#
+# Один хук, потому что в pi-setup пока нечего гейтить механически: скрипты проверяются
+# `tests/*.sh`, расширения — `node --test`, а формат и импорты здесь не линтились ни разу.
+# Гейт на deny-список появился первым: он — политика, а не код, и его нельзя править изнутри
+# сессии, которая им же и проверяется (#15820).
+
+# Два базовых хука нужны не только сами по себе: `SKIP=deny-list-guard` в prek 0.4.3 фильтрует хуки
+# до запуска, и если после фильтра не осталось ни одного, prek падает с «No hooks found after
+# filtering» — то есть документированный обход переставал бы работать. С базовыми хуками обход
+# оставляет что запускать.
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], priority = 10 },
+  { id = "end-of-file-fixer", priority = 10 },
+]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "deny-list-guard"
+name = "ru-spellcheck: deny-список не правится агентом молча (#15820)"
+language = "system"
+# prek исполняет entry без шелла, поэтому интерпретатор назван явно.
+entry = "bash scripts/prek/deny-list-guard.sh"
+# Хук запускается только когда в индексе есть этот файл; пути приходят аргументами.
+files = "^config/ru-spellcheck/deny\\.txt$"
+pass_filenames = true
