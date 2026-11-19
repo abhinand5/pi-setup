@@ -1,0 +1,17 @@
+# Known-bad project vocabulary that AI invents (anglicisms, jargon), that AI agent is not allowed to change.
+воркtree
+инлайн
+мастеркод
+сет
+сьют
+харнесс
+базлайн
+ресинк
+бэкфилл
+энричер
+персист
+резолв
+апрув
+аппрув
+гомоглиф
+ассерт

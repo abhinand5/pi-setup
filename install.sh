@@ -752,7 +752,21 @@ install_spellcheck_allow() {
     "ru-spellcheck allow list"
 }
 
+# The deny list is the opposite: it names vocabulary an agent must not legalize, so the repo copy
+# is authoritative and a restore overwrites the live file. Leaving local edits would let a session
+# that grew the deny list un-ban its own wording on the next machine — and the list is human-owned
+# policy (a word is banned regardless of what an allowlist says).
+install_spellcheck_deny() {
+  local cfg_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  if [[ -f "$ROOT/config/ru-spellcheck/deny.txt" ]]; then
+    copy_path "$ROOT/config/ru-spellcheck/deny.txt" "$cfg_home/ru-spellcheck/deny.txt"
+  else
+    echo "warning: $ROOT/config/ru-spellcheck/deny.txt is missing — the deny list was not restored"
+  fi
+}
+
 install_spellcheck_allow
+install_spellcheck_deny
 
 if [[ -n "$BACKUP_DIR" ]]; then
   echo "To revert this install: $ROOT/install.sh --revert '$BACKUP_DIR'"

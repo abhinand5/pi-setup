@@ -22,6 +22,17 @@ Allowlists, applied on top of hunspell:
     agent and the CI see the same vocabulary. Files are searched upwards from the checked
     file (or the cwd for stdin) up to the git root; the personal file still applies.
 
+Denylist — the opposite list, and it wins over both allowlists and over hunspell:
+  * personal: $XDG_CONFIG_HOME/ru-spellcheck/deny.txt (seeded and overwritten from the repo);
+  * project:  .ru-spellcheck-deny at the repository root.
+A word from the denylist is always a finding (kind DENY), even if it is spelled correctly or sits
+in an allowlist: it is vocabulary the agent invented and must not legitimize (воркtree, инлайн,
+харнесс). Those entries are human-owned policy — `--add` refuses to write a denylisted word, and
+the deny file is not something an agent edits to legalize its own wording. Matching is exact on
+the word form (no stem expansion: `сет` must not ban `сети`). The denylist is not consulted by
+`--homoglyph-only`: that gate is about scripts, and mixed-script deny entries are caught there as
+HOMOGLYPH anyway.
+
 Gate: `--homoglyph-only` is the gate for short prose (a chat message, a Redmine note, a commit
 body): zero false positives, exit 1 on a hit. It sees only script mixing, so a long document —
 a hand-off note, a README, a task description — passes it while losing its vowels (сесии,
@@ -44,7 +55,9 @@ import sys
 
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 ALLOW = os.path.join(CONFIG_HOME, "ru-spellcheck", "allow.txt")
+DENY = os.path.join(CONFIG_HOME, "ru-spellcheck", "deny.txt")
 REPO_ALLOW_NAME = ".ru-spellcheck-allow"
+REPO_DENY_NAME = ".ru-spellcheck-deny"
 BASELINE = os.path.join(CONFIG_HOME, "ru-spellcheck", "baseline.txt")
 # Short-prose threshold for --homoglyph-only: past it the gate cannot see the error class it is
 # asked to catch, so it refuses the input instead of reporting it clean (#15799 п.2).
@@ -158,11 +171,12 @@ def repo_root(start):
         cur = parent
 
 
-def repo_allow_files(paths):
-    """Project allowlists: .ru-spellcheck-allow from each checked file up to its git root.
+def repo_allow_files(paths, name=REPO_ALLOW_NAME):
+    """Project word lists: `.ru-spellcheck-allow` (or `deny`, by `name`) up to each file's git root.
 
     Walks up rather than taking only the root: a checked file may live in a nested checkout, and
     silently ignoring its dictionary would look like a spelling error in the file's own jargon.
+    The deny file is looked up exactly the same way, so both lists follow the checked files.
     """
     found = []
     for path in paths:
@@ -173,7 +187,7 @@ def repo_allow_files(paths):
             continue
         cur = os.path.abspath(start or os.getcwd())
         while True:
-            candidate = os.path.join(cur, REPO_ALLOW_NAME)
+            candidate = os.path.join(cur, name)
             if os.path.isfile(candidate) and candidate not in found:
                 found.append(candidate)
             if cur == root:
@@ -207,6 +221,36 @@ def load_allow(extra_files=()):
     return out
 
 
+def read_deny_file(path):
+    """Denylist entries are exact word forms, deliberately without stem expansion.
+
+    `сет` is banned jargon, `сети` is an ordinary Russian word: stem matching would ban the
+    second with the first, and a false positive here means the gate cries on correct prose.
+    """
+    out = set()
+    if not path or not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            w = line.strip().lower()
+            if w and not w.startswith("#"):
+                out.add(w)
+    return out
+
+
+def load_deny(extra_files=()):
+    """Personal denylist plus the project denylists found next to the checked files."""
+    out = read_deny_file(DENY)
+    for path in extra_files:
+        out |= read_deny_file(path)
+    return out
+
+
+def is_denied(word, deny):
+    low = word.lower().strip(".,;:!?«»()\"'")
+    return bool(low) and (low in deny or low.replace("ё", "е") in deny)
+
+
 def _blank(match):
     return re.sub(r"[^\n]", " ", match.group(0))
 
@@ -232,7 +276,7 @@ def segments(tok):
     return [s for s in re.split(r"[-‑–]", tok) if s]
 
 
-def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None):
+def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None, deny=None):
     findings = []
     hidden = mask(text)
     line_starts = [0]
@@ -255,10 +299,15 @@ def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None):
             continue
         if homoglyph_only:
             continue
+        deny = deny or set()
         # 2. dictionary miss, per segment (so "golden-фикстуры" is judged on "фикстуры")
         for s in segs:
             if not CYR.search(s) or LAT.search(s):
                 continue  # pure-Latin segment of a compound: not our business
+            if is_denied(s, deny):
+                # Приоритет над allow, словарём и baseline: слово не вернуть, его только заменить.
+                findings.append((m.start(), "DENY", s.rstrip("."), "слово из deny-списка"))
+                continue
             if is_known(d, s, allow):
                 continue
             if len(segs) > 1 and is_fragment(s, stems or []):
@@ -297,6 +346,19 @@ def main(argv):
             return 2
         # Project jargon belongs to the project: inside a repository `--add` writes the file that is
         # committed with the code, so the next agent does not re-learn the same words (#15717 п.4).
+        denied = load_deny()
+        blocked = [w for w in argv[1:] if is_denied(w, denied)]
+        if blocked:
+            print(
+                f"ru-spellcheck: отказ — слова в deny-списке: {' '.join(blocked)}",
+                file=sys.stderr,
+            )
+            print(
+                f"ru-spellcheck: {DENY} — владение человека: агент не узаконивает собственную лексику;"
+                " замените слово в тексте, а не словарь",
+                file=sys.stderr,
+            )
+            return 2
         target = ALLOW
         if argv[0] == "--add" and repo_root(os.getcwd()) is not None:
             target = os.path.join(repo_root(os.getcwd()), REPO_ALLOW_NAME)
@@ -347,16 +409,17 @@ def main(argv):
             )
             return 3
     if homoglyph_only:
-        d, allow, stems = None, set(), []  # script-mixing needs no dictionary at all
+        d, allow, stems, deny = None, set(), [], set()  # script-mixing needs no dictionary at all
     else:
         # Project allowlists are looked up from the checked files, so stdin uses the cwd.
         d = load_dict()
         allow = load_allow(repo_allow_files(paths))
         stems = load_stems()
+        deny = load_deny(repo_allow_files(paths, REPO_DENY_NAME))
     baseline = load_baseline(baseline_path)  # opt-in: --baseline PATH
     results = []
     for path, text in inputs:
-        results += check_text(text, d, allow, path, homoglyph_only, baseline, stems)
+        results += check_text(text, d, allow, path, homoglyph_only, baseline, stems, deny)
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=1))
     else:

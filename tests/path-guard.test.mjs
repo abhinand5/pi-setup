@@ -208,6 +208,36 @@ test("вне воркдерева правило основного дерева
 	assert.equal(verdict.allowed, true);
 });
 
+test("списки запрещённых слов ru-spellcheck не редактируются — #15820", () => {
+	// Агент, который может править deny-список, узаконивает собственную лексику: проверка после этого
+	// ничего не значит. Оба пути: машинный список и проектный файл.
+	for (const path of [
+		"/home/denis/.config/ru-spellcheck/deny.txt",
+		"/home/denis/p/pi-setup/config/ru-spellcheck/deny.txt",
+		"/home/denis/p/msl/msb-lk/.ru-spellcheck-deny",
+	]) {
+		const verdict = check(path);
+		assert.equal(verdict.allowed, false, `правка разрешена: ${path}`);
+		assert.match(verdict.reason, /список запрещённых слов/);
+		assert.match(verdict.reason, /PI_PATH_GUARD_ALLOW_DENY_LIST=1/);
+	}
+});
+
+test("обычные файлы рядом с deny-списком не задеты", () => {
+	// allow-список пополняется агентом по замыслу (--add), поэтому запрет только на deny.
+	assert.equal(check("/home/denis/.config/ru-spellcheck/allow.txt").allowed, true);
+	assert.equal(check("/home/denis/p/pi-setup/.ru-spellcheck-allow").allowed, true);
+	assert.equal(check("/home/denis/p/pi-setup/config/ru-spellcheck/deny.md").allowed, true);
+});
+
+test("осознанный обход запрета deny-списка проходит", () => {
+	const verdict = checkPath("/home/denis/p/pi-setup/config/ru-spellcheck/deny.txt", CWD, {
+		roots: ROOTS,
+		allowDenyList: true,
+	});
+	assert.equal(verdict.allowed, true);
+});
+
 test("ответ Pi для заблокированного вызова называет причину", () => {
 	const result = toToolCallResult(check("/home/denis/work 2>/dev/null"));
 	assert.equal(result.block, true);

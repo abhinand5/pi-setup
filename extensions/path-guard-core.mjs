@@ -18,6 +18,9 @@
 // 4. Первый новый уровень пути — «двойник» существующего соседа по гомоглифам: `/home/denis/п/…`
 //    при существующем `/home/denis/p` (#15743 п.1). Тот вызов создал четыре уровня каталогов в
 //    домашнем каталоге, и нашлись они тремя вызовами позже.
+// 6. Списки запрещённых слов `ru-spellcheck` (`ru-spellcheck/deny.txt`, `.ru-spellcheck-deny`) —
+//    владение человека: агент, который может править deny-список, узаконивает собственную лексику
+//    и делает проверку бессмысленной. Обход — PI_PATH_GUARD_ALLOW_DENY_LIST=1.
 // 5. Запись в основное дерево, когда сессия работает в `.claude/worktrees/<имя>` (#15742 п.5):
 //    правка уезжает не в дерево задачи, а prek-хук `root-files-clean` ловит такое только на
 //    коммите — которого в основном дереве не будет.
@@ -157,6 +160,12 @@ function mainTreeViolation(absolutePath, cwd) {
 	return { repoRoot, worktree };
 }
 
+/**
+ * Списки запрещённых слов ru-spellcheck: и машинный (`~/.config/ru-spellcheck/deny.txt`), и проектный
+ * (`.ru-spellcheck-deny`). Правка запрещена всегда — файл описывает политику языка, а не код.
+ */
+const DENY_LIST_PATH = /(^|[/\\])ru-spellcheck[/\\]deny\.txt$|(^|[/\\])\.ru-spellcheck-deny$/i;
+
 /** Символы, которых не бывает в имени файла и которые означают «это собирали как команду». */
 const SHELL_METACHARACTERS = /[<>|;&`$*?{}[\]()!^]/;
 
@@ -248,6 +257,18 @@ export function checkPath(path, cwd, env = {}) {
 					"Осознанный обход — PI_PATH_GUARD_ALLOW_MAIN_TREE=1",
 			};
 		}
+	}
+
+	if (!env.allowDenyList && DENY_LIST_PATH.test(absolutePath)) {
+		return {
+			allowed: false,
+			absolutePath,
+			reason:
+				`путь ${absolutePath} — список запрещённых слов ru-spellcheck. Он принадлежит человеку: ` +
+				"агент, который может его править, узаконивает собственную лексику, и проверка перестаёт " +
+				"что-либо значить. Правьте текст, а не список; осознанный обход (владелец машины) — " +
+				"PI_PATH_GUARD_ALLOW_DENY_LIST=1",
+		};
 	}
 
 	if (!env.allowTwin) {
