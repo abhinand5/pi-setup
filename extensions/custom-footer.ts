@@ -4,8 +4,10 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
-		// Track thinking level from events
-		let thinkingLevel = "high";
+		// Seed from the live session, not a literal: `thinking_level_select` fires only on a
+		// change, so a hardcoded seed made a fresh `low` session render `high` until the
+		// first manual switch.
+		let thinkingLevel = pi.getThinkingLevel();
 
 		pi.on("thinking_level_select", async (event) => {
 			thinkingLevel = event.level;
