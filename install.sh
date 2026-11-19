@@ -173,7 +173,8 @@ copy_path() {
 
 # Сторож двух копий идёт до первой записи: живая копия может нести собственные правки, и restore
 # перезаписал бы их молча (#15836 п.2, #15838 п.7).
-if [[ "$RESTORE" == "1" || "$COPY_CONFIG" == "1" ]]; then
+# --revert пишет из каталога бэкапа, а не из репозитория: две копии тут не при чём.
+if [[ -z "$REVERT_DIR" && ( "$RESTORE" == "1" || "$COPY_CONFIG" == "1" ) ]]; then
   dg_standard_pairs live
   if [[ "$DRY_RUN" == "1" ]]; then
     dg_report dry-run
