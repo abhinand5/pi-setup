@@ -359,6 +359,7 @@ tests/ru-spellcheck-long-input.sh    # long-input refusal (exit 3) and --allow-l
 tests/ru-spellcheck-probe.sh         # known-bad words caught; correct-but-wrong word measured
 tests/prek-deny-list-guard.sh        # commit hook: denylist edit blocked, SKIP and env bypass pass
 tests/two-copy-guard.sh              # sync/install refuse to overwrite a copy that has edits of its own
+tests/restore-worktree-symlinks.sh   # ~/.local/bin links point at the main checkout, not at a worktree
 ```
 
 Files that live in two copies — `skills/`, `config/AGENTS.md`, the spellcheck dictionaries — go through

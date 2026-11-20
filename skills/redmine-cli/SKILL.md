@@ -422,6 +422,19 @@ redmine issues get <id> --download-attachments /tmp/redmine-<id>/
 
 Then `Read` image/files. Do not guess from description alone.
 
+### Relations (связи между задачами)
+
+Форма команды — с `issues` и подкомандой (#15857 п.4): `redmine relations create` — unknown command, `issues relations add 15787 --issue 15854` — unknown flag, и до `--help` уходило пять вызовов. Тип — короткое имя (`relates`), а не число; `--delay` принимают только `precedes` и `follows`.
+
+```bash
+redmine issues relations add <id> --to <id> --type relates   # relates|duplicates|duplicated|blocks|blocked|precedes|follows|copied_to|copied_from
+redmine issues relations add <id> --to <id> --type precedes --delay 5
+redmine issues relations list <id> -o json                    # id связи — только отсюда, для remove
+redmine issues relations remove <relation-id>
+```
+
+Связь, уже существующая в обратную сторону (`A blocks B` == `B blocked A`), вторым вызовом не создаётся: сначала `list`, потом `add`.
+
 ### Time
 
 ```bash

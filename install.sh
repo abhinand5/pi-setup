@@ -809,21 +809,48 @@ install_launcher() {
 
 install_launcher
 
+# Куда указывать симлинки ~/.local/bin. Обычно это сам чекаут, но из связанного воркдерева
+# ($ROOT/.git — файл) путь внутри него исчезает вместе с деревом, а симлинк остаётся битым:
+# 20.11.2026 restore, запущенный из ~/p/pi-setup-wt/<задача>, переключил симлинки rg, ru-spellcheck,
+# pi-models-check и redmine-file внутрь воркдерева, который убирают сразу после мержа PR (#15838 п.7
+# — та же ловушка, что «не копируй воркдерево в /tmp»). Поэтому цель симлинка — основное дерево из
+# `git worktree list`, а содержимое скиллов/расширений по-прежнему берётся из $ROOT.
+bin_link_root() {
+  if [[ ! -f "$ROOT/.git" ]]; then
+    printf '%s\n' "$ROOT"
+    return 0
+  fi
+  local main_root
+  main_root="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+  printf '%s\n' "${main_root:-$ROOT}"
+}
+
 # pi-models-check probes every id in subagents.modelScope.allow so "the catalog
 # lists it" is never mistaken for "the provider serves it".
 install_bin_helpers() {
-  local src dst
+  local src dst name link_root
+  link_root="$(bin_link_root)"
+  if [[ "$link_root" != "$ROOT" ]]; then
+    echo "Note: $ROOT — связанное воркдерево; $BIN_DIR/* будет указывать на основное дерево $link_root,"
+    echo "      чтобы симлинки не умерли вместе с воркдеревом после мержа."
+  fi
   for src in "$ROOT"/bin/*; do
     [[ -f "$src" ]] || continue
-    dst="$BIN_DIR/$(basename "$src")"
-    [[ "$(basename "$src")" == "pi" ]] && continue
+    name="$(basename "$src")"
+    [[ "$name" == "pi" ]] && continue
+    dst="$BIN_DIR/$name"
+    if [[ "$link_root" != "$ROOT" && ! -f "$link_root/bin/$name" ]]; then
+      echo "Warning: $link_root/bin/$name нет — симлинк $name не ставлю (в воркдереве файл есть, в основном дереве нет)."
+      continue
+    fi
+    src="$link_root/bin/$name"
     run mkdir -p "$BIN_DIR"
     run rm -f "$dst"
     run ln -s "$src" "$dst"
     if [[ "$DRY_RUN" == "1" ]]; then
-      echo "would link $(basename "$src") -> $dst"
+      echo "would link $name -> $dst"
     else
-      echo "Linked $(basename "$src") -> $dst"
+      echo "Linked $name -> $dst"
     fi
   done
 }
