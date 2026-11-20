@@ -54,8 +54,11 @@ jobs:
           done < <(printf '%s\n' bin/* *.sh tests/*.sh)
           exit "$status"
 
+      # Кэш байткода — вне репозитория: `python3 -m py_compile bin/ru-spellcheck` кладёт
+      # `bin/__pycache__` рядом со скриптом, а следующий шаг перебирает `bin/*` и падал на каталоге
+      # («--help вернул код null») — красный CI на ровном месте, #15861.
       - name: ru-spellcheck compiles
-        run: python3 -m py_compile bin/ru-spellcheck
+        run: python3 -c 'import py_compile; py_compile.compile("bin/ru-spellcheck", cfile="/tmp/ru-spellcheck.pyc", doraise=True)'
 
       # --experimental-strip-types нужен, чтобы тест грузил сами `.ts` расширения: `node --check`
       # на них возвращает 0 даже при дубле объявления, и мёртвый сторож проходил бы зелёным.

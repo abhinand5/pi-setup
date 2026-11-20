@@ -134,3 +134,41 @@ test("флаги обёрток не съедают сам git", () => {
 	assert.equal(classifyCall("time make test").allowed, true);
 	assert.equal(classifyCall("sudo apt-get install -y jq").allowed, true);
 });
+
+// Правило 3 (#15849 п.3): `sed -i` — правка файла на месте. Правило «точечная правка — edit»
+// жило в AGENTS.md и не меняло поведения: в сессии #15822 после записи правила было 31 правка
+// через heredoc и девять `sed -i`.
+test("sed -i блокируется во всех обычных формах", () => {
+	for (const command of [
+		"sed -i 's/a/b/' src/Foo.php",
+		"sed -i.bak -e 's/a/b/' src/Foo.php",
+		"sed -E -i 's/(a)/b/' src/Foo.php",
+		"sed -n -i 's/a/b/p' src/Foo.php",
+		"sed --in-place 's/a/b/' src/Foo.php",
+		"sed --in-place=.bak 's/a/b/' src/Foo.php",
+		"cd /repo && sed -i 's/a/b/' src/Foo.php",
+		"sudo sed -i 's/a/b/' /etc/hosts",
+	]) {
+		const verdict = classifyCall(command);
+		assert.equal(verdict.allowed, false, command);
+		assert.match(verdict.reason, /sed -i/, command);
+		assert.match(verdict.hint, /edit/, command);
+	}
+});
+
+// Обратная сторона: `sed` без `-i` — фильтр текста, его блокировать нельзя; поиск строки «sed -i»
+// по репозиторию и heredoc-набор замен тоже проходят (решение #15849 п.3 их разрешает).
+test("sed без -i, поиск упоминания и heredoc не блокируются", () => {
+	for (const command of [
+		"sed -n '1,20p' src/Foo.php",
+		"sed 's/a/b/' src/Foo.php | head",
+		'rg -n "sed -i" docs/',
+		"python3 - <<'PY'\nimport io\nPY",
+	]) {
+		assert.equal(classifyCall(command).allowed, true, command);
+	}
+});
+
+test("sed -i снимается осознанным обходом", () => {
+	assert.equal(classifyCall("sed -i 's/a/b/' src/Foo.php", { allow: true }).allowed, true);
+});

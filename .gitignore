@@ -18,6 +18,10 @@ mcp-npx-cache.json
 mcp-onboarding.json
 local-models.json
 
+# Python bytecode cache (ручной `py_compile bin/ru-spellcheck` кладёт bin/__pycache__)
+__pycache__/
+*.pyc
+
 # Local generated backups
 *.backup
 *.bak
