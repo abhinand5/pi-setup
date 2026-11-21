@@ -122,6 +122,13 @@ git worktree add -q ../pi-setup-wt/<задача>-<слаг> -b <тип>/<зад
 (`bin_link_root()`). Осознанный просмотр ветки на живой машине — так и задумано; после него вернуть
 состояние: `./install.sh --restore` из `~/p/pi-setup`.
 
+`--restore` **не** перезаписывает файлы политики (`AGENTS.md`, `docs/delegation-models.md`,
+`docs/session-logs.md`): он печатает `AGENTS.md differs from the repo copy … leaving it` и выходит с
+кодом 0, поэтому «restore прошёл» о содержимом этих файлов не говорит ничего — смотреть надо на ту
+строку, а не на код возврата. Забирает правку `--copy-config`, но он же перезаписывает dotfiles из
+`home/` и словарь ru-spellcheck; когда расходится только политика, сверить её `diff` с `config/` и
+скопировать один файл — дешевле, чем `--copy-config` целиком.
+
 # GitHub: авторство артефактов
 
 `GITHUB_TOKEN` в окружении — ключ разработчика для composer, не личная учётная запись. `gh` на
