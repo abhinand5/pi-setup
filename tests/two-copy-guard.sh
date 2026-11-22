@@ -15,7 +15,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Уборка не должна красить тест: 22.11.2026 прогон CI на push в main упал не на проверке, а здесь —
+# `rm: cannot remove …/clone/.git: Directory not empty`, при том что тот же коммит в
+# PR-прогоне был зелёным. Локально не воспроизвелось (15 из 15 зелёных, git 2.45.2 против 2.56.1 на
+# раннере), поэтому сняты оба кандидата: фоновая автоматическая уборка внутри `.git` (см. `gc.auto`
+# у клона ниже) и одиночная попытка удаления. Повтор идёт через паузу, но не молча: если каталог не
+# убрался и с третьей попытки, `rm` печатает причину, и тест остаётся красным.
+cleanup() {
+  local attempt
+  for attempt in 1 2 3; do
+    rm -rf "$WORK" 2>/dev/null && return 0
+    sleep 0.5
+  done
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -28,6 +42,12 @@ cp "$ROOT"/install.sh "$ROOT"/sync.sh "$clone"/
 # ему не виден, а sync.sh в шаге (6) коммитит.
 git -C "$clone" config user.email "two-copy-guard@example.invalid"
 git -C "$clone" config user.name "two-copy guard test"
+# Автоматическая уборка клону теста не нужна, а `git gc --auto` и `maintenance run --auto` умеют
+# отделяться в фоновый процесс и писать в `.git` уже после того, как тест вернул управление, — ровно
+# то, что ломает `rm -rf` в trap выше. Обе задачи выключены в самом клоне: чужой `~/.gitconfig` тесту
+# не виден, а глобальный конфиг раннера менять нельзя.
+git -C "$clone" config gc.auto 0
+git -C "$clone" config maintenance.auto false
 mkdir -p "$clone/scripts/lib"
 cp "$ROOT"/scripts/lib/two-copy-guard.sh "$clone/scripts/lib/"
 
