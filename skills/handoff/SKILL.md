@@ -9,7 +9,7 @@ Write a handoff document summarising the current conversation so a fresh agent c
 
 Name it so it can be found without asking: `handoff-<issue-or-slug>-<YYYY-MM-DD-HHMM>.md` (e.g. `handoff-15620-2026-11-16-1340.md`). A temp directory is invisible to the next session, so end your reply with the ready-to-paste first line — `Read /tmp/handoff-… and continue` — and nothing else on that line.
 
-Include a "suggested skills" section in the document, naming which skills the next agent should call the Skill tool for.
+Include a "suggested skills" section in the document, naming which skills the next agent should read (each as `../<name>/SKILL.md`).
 
 Do not duplicate content already captured in other artifacts (specs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
 

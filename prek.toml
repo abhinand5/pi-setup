@@ -29,3 +29,13 @@ entry = "bash scripts/prek/deny-list-guard.sh"
 # Хук запускается только когда в индексе есть этот файл; пути приходят аргументами.
 files = "^config/ru-spellcheck/deny\\.txt$"
 pass_filenames = true
+
+[[repos.hooks]]
+id = "skill-tool-refs"
+name = "скиллы: никакого «Skill tool», только чтение SKILL.md"
+language = "system"
+entry = "bash scripts/prek/skill-tool-refs.sh"
+# Указатель может сломать и правка скилла, и удаление соседа, поэтому хук смотрит весь набор: он
+# быстрый (grep по 37 файлам), а частичный запуск пропустил бы битую ссылку в непереименованном файле.
+files = "^skills/.*SKILL\\.md$"
+pass_filenames = false
