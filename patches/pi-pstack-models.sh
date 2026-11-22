@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 # Strip the Cursor model slugs out of the pstack skill bodies.
 #
-# Upstream pstack was written for Cursor, so its bodies fall back to concrete
-# Cursor slugs when no `~/.cursor/rules/pstack-models.mdc` rule exists:
-# `claude-opus-5-5-xhigh`, `grok-4.7-xhigh-fast`, `composer-*`, `cursor-grok-*`.
-# None of those ids exist in this Pi installation, and Pi never has the rule, so
-# the fallback always fires. This patch rewrites every such body, at generation
-# time, to a `pstack:<role>` reference: the adapter then picks the role's model
-# and thinking, so no skill names a model.
+# Upstream pstack was written for Cursor, so its bodies hand out concrete Cursor
+# slugs (`claude-fable-5-2-high`, `claude-opus-5-5-high-fast`, `gemini-4-neon-xhigh`,
+# `grok-*`, `gpt-*`, `composer-*`, `cursor-grok-*`) whenever the
+# `~/.cursor/rules/pstack-models.mdc` rule does not exist. None of those ids exist
+# in this Pi installation and Pi never has the rule, so the fallback always fires.
+# This patch rewrites every such body, at generation time, to a `pstack:<role>`
+# reference: the adapter then picks the role's model and thinking, so no skill
+# names a model.
 #
-# The rewrite table lives in this script and is the single source of truth. The
-# script regenerates the table inside `src/generate.ts` and verifies the result
-# against the upstream checkout: if a future upstream release adds a slug this
-# table does not cover, the run fails and prints the leftovers.
+# The rewrite table lives in this script and is the single source of truth. It is
+# sentence-precise, so it is tied to one upstream revision: the table below was
+# derived against pstack 0.15.46 (commit aaeb0ea). The script regenerates the
+# table inside `src/generate.ts` and verifies the result against the upstream
+# checkout; when upstream rewords a body, the run fails and prints what still
+# names a slug (or what no longer matches) — re-derive the table then, never
+# loosen the check.
 #
 # It also replaces the Cursor model ids in the adapter's own `setup.md` examples
 # with `<provider>/<model>` placeholders, so nothing teaches a blocked family.
@@ -71,113 +75,71 @@ check_only = sys.argv[4] == "1"
 # (upstream text, Pi text). Applied to every generated body and every copied
 # Markdown support file. Ordered: the specific sentences first, then the generic
 # phrase cleanup.
+# --- the rewrite table ------------------------------------------------------
+# (upstream text, Pi text). Applied to every generated body and every copied
+# Markdown support file. Derived against pstack 0.15.46 (commit aaeb0ea); the
+# leftovers check below is what catches the next upstream rewording, so re-derive
+# the table when it fails rather than loosening it.
 REWRITES = [
-    # pistack-arena
     (
-        "If the rule or that line is missing, default to one each on `claude-opus-5-5-xhigh` and `grok-4.7-xhigh-fast`. An `auto` or `inherit-parent` entry in this line means the parent model, so omit `model` for it.",
-        "If the rule or that line is missing, run one seat on `pstack:judgment` and one on `pstack:general`. A role that inherits the parent model runs with no `model`, so omit it for that seat.",
+        "3. Pick the runners from the `arena runners` line in `~/.cursor/rules/pstack-models.mdc`, by default `claude-fable-5-2-high`, `claude-opus-5-5-high-fast`, and `gemini-4-neon-xhigh`. An `auto` or `inherit-parent` entry is the parent model, so omit `model` and spawn `generalPurpose`. If the Task tool rejects a slug, use the nearest valid slug of the same family or drop the seat, keep at least two runners, and say so. Families go by prefix, and the longest match wins: `claude-fable-*`, `claude-*`, and `gemini-*`, after dropping a leading `cursor-`. Any other slug's family is its text before the first hyphen. Spawn more for multiple design directions, and repeat one model when the work is generation-bound, not judgment-sensitive. Pick each subagent's reasoning level per the Subagents section of the **poteto-mode** skill.",
+        "3. Use the `arena runners` seats. If the panel is unset, its seats are `pstack:judgment` and `pstack:general`. A role that inherits the parent model runs with no `model`, so omit it for that seat. If the delegation rejects a seat, drop it, keep at least two runners, and say so. Spawn more for multiple design directions, and repeat one role when the work is generation-bound, not judgment-sensitive. Pick each subagent's thinking level per the Subagents section of the **poteto-mode** skill.",
     ),
     (
-        "If the Task tool rejects a configured entry, run that seat on its family's default and say so. Families go by prefix: `claude-*`, and `grok-*` with `cursor-grok-*` and `composer-*`. A refused `composer-*` entry runs on `grok-4.7-xhigh-fast`. If the family has no default, or the Task tool rejects that default, use the closest valid slug of the same family from its error message, or drop the seat and say so when there is none.",
-        "If the delegation rejects a configured entry, say so and run that seat on `pstack:general` instead. If that is rejected too, drop the seat and say so.",
+        "After all Phase B candidates complete, spawn one readonly judge from the `arena cross-judge pool` line in `~/.cursor/rules/pstack-models.mdc`, by default `claude-opus-5-5-high-fast`, `gemini-4-neon-xhigh`. The judge is never from the parent's vendor, and Fable counts as Claude for that check, so use the first entry from another vendor. An `auto` or `inherit-parent` entry is the parent model. If you do not know the parent's model, use the first real slug and say that the vendor check did not run. If the Task tool rejects a slug, use the nearest valid slug of the same family, then the next such entry, or skip the judge, and say so. While you read in Phase D, the judge scores each candidate, by path label, on each rubric criterion and recommends a base.",
+        "After all Phase B candidates complete, spawn one readonly judge from the `arena cross-judge pool` seats. If the pool is unset, its seats are `pstack:judgment` and `pstack:general`. The judge must not run on the parent's own model, so skip a seat that resolves to it and take the next seat. If a seat is rejected, move to the next seat; if no seat from another model runs, skip the judge, pick the base alone, and say so. If you do not know the parent's model, try the seats in order and say that the diversity check did not run. While you read in Phase D, the judge scores each candidate, by path label, on each rubric criterion and recommends a base.",
     ),
     (
-        "Run each added runner on a remaining runner's model, or omit `model` so it runs on the parent model when none remain, and say so.",
-        "Run each added runner on a remaining runner's role, or omit `model` so it runs on the parent model when none remain, and say so.",
+        "3. Pick the worker model from the `swarm workers` line in `~/.cursor/rules/pstack-models.mdc`. If the rule or that line is missing, use `claude-opus-5-5-high-fast`. For `auto` or `inherit-parent`, omit `model` so the workers run on the parent model. If the Task tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message. For a model race, name each arm's model up front. Pick each subagent's reasoning level for the job, per the Subagents section of the **poteto-mode** skill.",
+        "3. Run the workers as `pstack:general`, or omit `model` when that role inherits so they run on the parent model. If a delegation rejects the role, report it instead of trying another model. For a role race, name each arm's role up front. Pick each subagent's thinking level for the job, per the Subagents section of the **poteto-mode** skill.",
     ),
     (
-        "Use the same model N times when the work is generation-bound rather than judgment-sensitive.",
-        "Use the same role N times when the work is generation-bound rather than judgment-sensitive.",
+        "**Defaults for every `Task` call.** `run_in_background: true`, agent mode (readonly strips MCP), file pointers not inlined context, and an explicit model per role, Project workers included. `/setup-pstack` writes `~/.cursor/rules/pstack-models.mdc`, whose per-role lines override the defaults below and the role models in the routed skills (`arena`, `swarm`, `interrogate`). A role with no line keeps its default. A line of `inherit-parent` or `auto` runs the role on the parent model, so omit `model` and spawn `generalPurpose`, because `poteto-agent` defaults to Opus 5.5. Each code playbook reads its own line (`feature, refactoring`, `bug-fix`, `perf-issue`, or `hillclimb`), prose and judgment read `judgment and prose`, and trivial mechanical edits read `swarm workers`. If the rule has no `# defaults: 3` line, an older setup wrote it. Keep honoring its lines, and tell the user once per session to rerun `/setup-pstack`.",
+        "**Defaults for every `Task` call.** `run_in_background: true`, agent mode (readonly strips MCP), file pointers not inlined context, and an explicit role for every subagent, Project workers included. `/skill:pistack-setup` writes the role table to `~/.pi/agent/pi-pstack-adapter.json`, and its entries override the defaults below and the roles named in the routed skills (`arena`, `swarm`, `interrogate`). A role with no entry inherits the parent session's model and thinking, so omit `model` for it. Each code playbook names its own role (`feature` or `refactoring`, `bug-fix`, `perf-issue`, `hillclimb`), prose and judgment use `judgment`, and trivial mechanical edits use `general`.",
     ),
     (
-        "After all Phase B candidates complete, choose one model from the `arena cross-judge pool` line in `~/.cursor/rules/pstack-models.mdc`. If the rule or that line is missing, choose from `claude-opus-5-5-xhigh` and `grok-4.7-xhigh-fast`. Spawn one readonly judge subagent. The judge is never from the parent's family, as Phase A step 3 defines families. Try only the entries from another family, in pool order. An `auto` or `inherit-parent` entry is the parent model, so it never judges. With the default pool, a Claude parent gets `grok-4.7-xhigh-fast`. A parent from any other family gets `claude-opus-5-5-xhigh` first. If the Task tool rejects an entry, use a valid slug of the same model at the closest level or speed from the error message, or move to the next entry when there is none. If no entry from another family runs, try the default pool's entries from another family the same way. If none of those runs, skip the judge, pick the base alone in Phase D, and say so. If you do not know the parent's model, try the pool's real slugs in pool order and say that the family check did not run.",
-        "After all Phase B candidates complete, use the `arena cross-judge pool` seats. If the pool is unset, its seats are `pstack:judgment` and `pstack:general`. Spawn one readonly judge subagent. The judge must not run on the parent's own model, so skip a seat that resolves to it. With the default seats, try `pstack:general` first when the parent runs on `judgment`, and `pstack:judgment` first otherwise. If a seat is rejected, move to the next seat. If no seat from another model runs, skip the judge, pick the base alone in Phase D, and say so. If you do not know the parent's model, try the seats in order and say that the diversity check did not run.",
-    ),
-    # pistack-architect
-    (
-        "If the rule or that line is missing, use `claude-opus-5-5-xhigh` and `grok-4.7-xhigh-fast`. Alias and rejected entries follow the runner rules in the **arena** skill's Phase A.",
-        "If the rule or that line is missing, run one seat on `pstack:judgment` and one on `pstack:general`. Inherited and rejected seats follow the runner rules in the **arena** skill's Phase A.",
-    ),
-    # pistack-how
-    (
-        "Explorers use the `how explorer` line in the `pstack-models.mdc` rule (default `grok-4.7-xhigh-fast`), and every explainer uses the `how explainer` line (default `claude-opus-5-5-xhigh`). Set `model` to that line's value, or to the default if the rule or the line is missing. Leave `model` unset when the value is `auto` or `inherit-parent`. If the Task tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message.",
-        "Explorers run as `pstack:general`, and every explainer runs as `pstack:judgment`. The adapter picks each role's model and thinking, so omit `model` only when the role inherits. If a delegation rejects the role, report it instead of trying another model.",
-    ),
-    # pistack-why
-    (
-        "`model`: the `why investigators` line, default `grok-4.7-xhigh-fast`.",
-        "`model`: `pstack:general`.",
+        "- Code, prose, and judgment: `claude-opus-5-5-xhigh-fast`.",
+        "- Code, prose, and judgment: `pstack:judgment`.",
     ),
     (
-        "`model`: the `why synthesizer` line, default `claude-opus-5-5-xhigh`.",
-        "`model`: `pstack:judgment`.",
-    ),
-    # pistack-swarm
-    (
-        "3. Pick the worker model from the `swarm workers` line in `~/.cursor/rules/pstack-models.mdc`. If the rule or that line is missing, use `grok-4.7-xhigh-fast`. For `auto` or `inherit-parent`, omit `model` so the workers run on the parent model. If the Task tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message.",
-        "3. Run the workers as `pstack:general`, or omit `model` when that role inherits so they run on the parent model. If a delegation rejects the role, report it instead of trying another model.",
-    ),
-    # pistack-reflect
-    (
-        "Each reviewer and the synthesizer name a role line in the `pstack-models.mdc` rule and a default. Set `model` to that line's value, or to the default if the rule or the line is missing. Leave `model` unset when the value is `auto` or `inherit-parent`. If the Task tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message.",
-        "Each reviewer and the synthesizer name a role, passed as `pstack:<role>`, and the adapter picks its model and thinking. Omit `model` when the role inherits. If a delegation rejects the role, report it instead of trying another model.",
+        "- Trivial mechanical edits: `claude-opus-5-5-high-fast`.",
+        "- Trivial mechanical edits: `pstack:general`.",
     ),
     (
-        "| Lens | Role line | Default `model` | Prompt template |\n"
-        "|---|---|---|---|\n"
-        "| Judgment | `reflect judgment, divergent, synthesizer` | `claude-opus-5-5-xhigh` | `references/judgment-reviewer.md` |\n"
-        "| Tooling | `reflect tooling` | `grok-4.7-xhigh-fast` | `references/tooling-reviewer.md` |\n"
-        "| Divergent | `reflect judgment, divergent, synthesizer` | `claude-opus-5-5-xhigh` | `references/divergent-reviewer.md` |",
-        "| Lens | `model` | Prompt template |\n"
-        "|---|---|---|\n"
-        "| Judgment | `pstack:judgment` | `references/judgment-reviewer.md` |\n"
-        "| Tooling | `pstack:general` | `references/tooling-reviewer.md` |\n"
-        "| Divergent | `pstack:judgment` | `references/divergent-reviewer.md` |",
+        "- Diverse review and design panels: one runner each on `claude-fable-5-2-high`, `claude-opus-5-5-high-fast`, and `gemini-4-neon-xhigh`.",
+        "- Diverse review and design panels: the `arena-runners` seats.",
     ),
     (
-        "`model` from the `reflect judgment, divergent, synthesizer` line (default `claude-opus-5-5-xhigh`)",
-        "`model` set to `pstack:judgment`",
+        "**Fable 5.2 is an exception.** It runs outside a panel only when the user named it for this task or two Opus 5.5 xhigh runs of the same brief failed its check. Say which. Difficulty alone never qualifies.",
+        "**`strongest-judgment` is an exception.** It runs outside a panel only when the user asked for it on this task, or when two `judgment` runs of the same brief failed the check. Say which. Difficulty alone never qualifies.",
     ),
     (
-        '- "we renamed `gpt-4` to `gpt-4o` in `encodingForModel`"',
-        '- "we renamed `model-v1` to `model-v2` in `encodingForModel`"',
-    ),
-    # pistack-poteto-mode
-    (
-        "explicit model per role (configurable via `/setup-pstack`. Defaults `grok-4.7-xhigh-fast` for code, `claude-opus-5-5-xhigh` for prose and judgment)",
-        "an explicit role for every spawn, passed as `pstack:<role>` (configure the roles with `/skill:pistack-setup`; code roles default to `pstack:feature`, prose and judgment to `pstack:judgment`)",
+        "**Match the model to the job.** Start from the role's line or default, keep its family, and set the level the job needs. The `/setup-pstack` budget sets each role's starting level. Panel seats keep their listed level. Raise any other role one step, up to xhigh, for the hardest or subtlest work, lower it one step for judgment, and two or more steps for routine work. No role runs above xhigh. Opus 5.5 always runs its `-fast` slug. Verification always runs on the `swarm workers` model, `claude-opus-5-5-high-fast` by default. A Gemini seat runs at `gemini-4-neon-xhigh` unless its line names another level. If the Task tool rejects a slug, never pass it again. Fall back to the role's line or default, then the calling skill's fallback, then the closest valid slug of the same family, then omit `model`. Say so.",
+        "**Match the thinking level to the job.** Start from the role's configured thinking level, keep the role's model, and set the level the job needs. `/skill:pistack-setup` sets each role's starting level, and panel seats keep the level the table gives them. Raise it one step, up to `max`, for the hardest or subtlest work, and lower it for routine work. Verification always runs as `pstack:general`. If a delegation is rejected, do not try another model; report the failure and name the rejected role.",
     ),
     (
-        "go to your strongest judgment model (`claude-opus-5-5-xhigh`)",
-        "go to `pstack:strongest-judgment`",
+        "using your configured bug-fix model (default `claude-opus-5-5-xhigh-fast`)",
+        "using `pstack:bug-fix`",
     ),
     (
-        "Per-role lines in the `/setup-pstack` rule override these defaults and the model choices in the routed skills",
-        "The role table configured by `/skill:pistack-setup` overrides these defaults and the role choices in the routed skills",
+        "using your configured feature model (default `claude-opus-5-5-xhigh-fast`)",
+        "using `pstack:feature`",
     ),
     (
-        "A role with no line keeps its default, and a role line of `inherit-parent` or `auto` runs that role on the parent chat model (omit Task `model`).",
-        "A role with no entry inherits the parent session's model and thinking.",
+        "using your configured hillclimb model (default `claude-opus-5-5-xhigh-fast`)",
+        "using `pstack:hillclimb`",
     ),
     (
-        "Each code playbook's configured model comes from its line (`feature, refactoring`, `bug-fix`, `perf-issue`, or `hillclimb`), and the hardest changes read `hardest tasks`. Prose and judgment read `judgment and prose`.",
-        "Each code playbook names its own role (`feature` or `refactoring`, `bug-fix`, `perf-issue`, `hillclimb`), the hardest changes use `strongest-judgment`, and prose and judgment use `judgment`.",
+        "using your configured perf-issue model (default `claude-opus-5-5-xhigh-fast`)",
+        "using `pstack:perf-issue`",
     ),
     (
-        "**Match the model to the job.** Before each spawn, start from the role's line or default and pick the reasoning level and speed the job needs. The `/setup-pstack` budget sets each role's starting level, xhigh by default. Raise it one step, up to max, for the hardest or subtlest work. Lower it one step for judgment and two or more steps for routine work. Use fast mode only when the job is urgent, meaning CI or trunk is red or a person is blocked on the result right now. Otherwise use standard speed, the same slug without `-fast`. Verification is the exception and stays on the `swarm workers` model and speed (`grok-4.7-xhigh-fast` by default). Change only the effort level and whether the slug is fast, and keep the family the role names, so a diverse panel stays diverse. If the family has no slug at that level and speed, use its nearest slug. A role on `auto` or `inherit-parent` stays on the parent model. If the Task tool rejects the adjusted slug, do not try another adjusted slug. Use the role's line or default and say so. If the Task tool rejects that too, continue with the calling skill's fallback. A slug counts as rejected once a Task error says that the model is not valid, or leaves the slug out of its list of valid slugs. Never pass a rejected slug, and skip any fallback whose slug is already rejected. When the calling skill has no fallback, use the closest valid slug of the role's family from the error's list of valid slugs, or omit `model` so the subagent runs on the parent model when the list has none. When the calling skill's fallback runs out of slugs without saying what to do next, omit `model` too. Say so in both cases.",
-        "**Match the thinking level to the job.** Before each spawn, start from the role's configured thinking level and move it along `max`, `xhigh`, `high`, `medium`, `low`, `minimal`, `off`. Raise it one step for the hardest or subtlest work, and lower it for routine work. Keep the role's model family, so a diverse panel stays diverse. A role that inherits stays on the parent model and thinking. Verification is the exception: keep it on `pstack:general`. If a delegation is rejected, do not try another model; report the failure and name the role that was rejected.",
+        "using your configured refactoring model (default `claude-opus-5-5-xhigh-fast`)",
+        "using `pstack:refactoring`",
     ),
-    # pistack-poteto-mode playbooks
-    ("using your configured bug-fix model (default `grok-4.7-xhigh-fast`)", "using `pstack:bug-fix`"),
-    ("using your configured feature model (default `grok-4.7-xhigh-fast`)", "using `pstack:feature`"),
-    ("using your configured hillclimb model (default `grok-4.7-xhigh-fast`)", "using `pstack:hillclimb`"),
-    ("using your configured perf-issue model (default `grok-4.7-xhigh-fast`)", "using `pstack:perf-issue`"),
-    ("using your configured refactoring model (default `grok-4.7-xhigh-fast`)", "using `pstack:refactoring`"),
-    ("on the `swarm workers` model (default `grok-4.7-xhigh-fast`)", "on `pstack:general`"),
-    # generic cleanup, last
     (
-        "Pick each subagent's reasoning level and fast or standard speed for the job",
-        "Pick each subagent's thinking level for the job",
+        "runs on `claude-opus-5-5-medium-fast`.",
+        "runs on `pstack:general`.",
     ),
 ]
 
@@ -192,16 +154,16 @@ ADAPTER_REWRITES = [
         "`feature=<provider>/<model-a>:high|<provider>/<model-b>:high`. A panel's entries are separated by spaces, as",
     ),
     (
-        "in `PISTACK_MODELS='arena-runners=anthropic/claude-sonnet-4-5:high openai/gpt-5:high'`. The environment wins",
-        "in `PISTACK_MODELS='arena-runners=<provider>/<model-a>:high <provider>/<model-b>:high'`. The environment wins",
+        "in `PISTACK_MODELS='arena-runners=anthropic/claude-sonnet-4-5:high openai/gpt-5:high'`. `PISTACK_MODELS` overrides",
+        "in `PISTACK_MODELS='arena-runners=<provider>/<model-a>:high <provider>/<model-b>:high'`. `PISTACK_MODELS` overrides",
     ),
     (
-        '- `include`, a list of patterns a model must match, such as `["gpt-*"]` for GPT only.',
-        '- `include`, a list of patterns a model must match, such as `["glm-*"]` for one model family only.',
+        "- `include`, a list of patterns a model must match, such as `[\"gpt-*\"]` for GPT only.",
+        "- `include`, a list of patterns a model must match, such as `[\"glm-*\"]` for one model family only.",
     ),
     (
-        '- `exclude`, a list of patterns no model may match, such as `["*claude*"]` for no Claude, including Bedrock-style ids.',
-        '- `exclude`, a list of patterns no model may match, such as `["*gemini*"]` for no Gemini, including provider-prefixed ids.',
+        "- `exclude`, a list of patterns no model may match, such as `[\"*claude*\"]` for no Claude, including Bedrock-style ids.",
+        "- `exclude`, a list of patterns no model may match, such as `[\"*gemini*\"]` for no Gemini, including provider-prefixed ids.",
     ),
 ]
 
@@ -209,7 +171,7 @@ ADAPTER_REWRITES = [
 REPLACED_SKILLS = {"setup-pstack", "status"}
 
 # A Cursor model slug left behind after the rewrite table.
-SLUG = re.compile(r"\b(?:claude|grok|gpt|gemini|composer|cursor-grok)-[0-9]")
+SLUG = re.compile(r"\b(?:claude|grok|gpt|gemini|composer|cursor-grok)(?:-[a-z]+)*-[0-9][a-z0-9.-]*")
 
 BLOCK_START = "// pi-pstack-models: start"
 BLOCK_END = "// pi-pstack-models: end"

@@ -512,11 +512,15 @@ collided with rpiv and stopped Pi from starting; it was removed on 2026-11-11 an
 Which other ports are safe next to this setup's tools: [docs/pstack-on-pi.md](docs/pstack-on-pi.md).
 
 The upstream bodies also hardcode Cursor model ids. Whenever their Cursor rule file is missing —
-always, on Pi — they fall back to `claude-opus-5-5-xhigh` and `grok-4.7-xhigh-fast`, ids that do not
-exist here. `patches/pi-pstack-models.sh` rewrites every generated body, and every copied playbook
-and reference file, to a `pstack:<role>` reference, so no skill names a model; the adapter's own
-`setup.md` examples use `<provider>/<model>` placeholders instead. The rewrite table lives in the
-script and the run fails when a new upstream release adds a slug the table does not cover:
+always, on Pi — they fall back to `claude-fable-5-2-high`, `claude-opus-5-5-high-fast`,
+`gemini-4-neon-xhigh`, ids that do not exist here. `patches/pi-pstack-models.sh` rewrites every
+generated body, and every copied playbook and reference file, to a `pstack:<role>` reference, so no
+skill names a model; the adapter's own `setup.md` examples use `<provider>/<model>` placeholders
+instead. The rewrite table lives in the script and the run fails when upstream drifts away from it,
+which happens on two occasions: a release adds a slug the table does not cover, or a release rewords
+a body the table matches sentence by sentence. The table is therefore tied to one upstream revision
+(pstack 0.15.46, commit `aaeb0ea`); after an adapter update, re-derive it rather than loosen the
+check:
 
 ```bash
 ./patches/pi-pstack-models.sh --check     # exit 1 if the patch is missing
@@ -532,60 +536,22 @@ The enforcement layer behind both is `subagents.modelScope` in `settings.json`, 
 proves the allow list against the provider. Background and the evidence:
 [docs/pstack-on-pi.md](docs/pstack-on-pi.md#model-slugs-and-why-a-fan-out-dies-outside-the-cap).
 
-### `/review-loop`: the reviewer stays in its own directory
+### `pi-subagents`: the local prompt patches are gone
 
-`patches/pi-subagents-review-loop-scope.sh` adds one paragraph to the packaged `/review-loop`
-prompt: a reviewer works only in the directory it was given and must not read, quote, or claim the
-uncommitted work of a sibling worktree. `cwd` alone is not enough — `git worktree list` invites the
-detour by itself, and a reviewer that took it reported 13 dirty files of another session as findings
-about the diff it was given (#15674 п.3). The edit is idempotent and survives `pi update --extensions`
-through `install.sh`:
+`pi-subagents` 0.89.2 rewrote `prompts/review-loop.md` (down to 47 lines) and
+`skills/pi-subagents/SKILL.md`, so the five patches that added rules to those files were removed on
+2026-11-23. Two of their rules are now upstream text and need nothing here: an async child returns
+control and wakes the parent, so the parent must not sleep, poll, or call `bg_wait` for ordinary
+children; and a per-child `output:` is bound through `runs.all`, because a `workflow: "parallel"`
+item accepts `agent`, `task`, `cwd` and `model` only.
 
-```bash
-./patches/pi-subagents-review-loop-scope.sh --check     # exit 1 if the paragraph is missing
-./patches/pi-subagents-review-loop-scope.sh             # apply
-```
-
-### `/review-loop`: the diff is taken against `origin/<base>`
-
-`patches/pi-subagents-review-loop-origin-base.sh` adds one paragraph to the same packaged prompt: the
-artifact under review is taken against `origin/<base>`, not the local base branch, with an explicit
-fallback for a repository whose base has no remote-tracking ref. A local branch lags silently: on
-2026-11-17 a review of #15702 was taken against a local `main` two commits behind `origin/main`, the
-artifact included an unrelated #175 fix and the 0.28.8 release files, and both reviewers spent a P1 on
-it (#15733 п.2). The block is idempotent and survives `pi update --extensions` through `install.sh`:
-
-```bash
-./patches/pi-subagents-review-loop-origin-base.sh --check     # exit 1 if the paragraph is missing
-./patches/pi-subagents-review-loop-origin-base.sh             # apply
-```
-
-### `/review-loop`: the report is a file, the answer is a verdict
-
-`patches/pi-subagents-review-loop-artifacts.sh` requires `output:` on every reviewer and holds two
-paragraphs about it: a failed round must not discard the reports of the children that finished, and
-`git` output must not be piped into `head`/`tail` (the reviewer dies on SIGPIPE). A third rule, added
-in #15929, keeps the report out of the answer: the response carries the path and a three-line verdict,
-because nine reports over four rounds of #15874 were 154 KB in the parent's context while the files
-already held every word (#15874 п.3). Each rule has its own marker, so a machine patched before the
-third rule existed receives it on the next run instead of skipping on the first marker:
-
-```bash
-./patches/pi-subagents-review-loop-artifacts.sh --check     # exit 1 if a rule is missing
-./patches/pi-subagents-review-loop-artifacts.sh             # apply
-```
-
-### `pi-subagents` skill: per-child `output:` only through `runs.all`
-
-`patches/pi-subagents-skill-output.sh` adds one bullet to the packaged skill: a
-`workflow: "parallel"` task accepts `agent`, `task`, `cwd` and `model` only, so an `output` there
-fails the whole call with `unsupported fields: output` before a child starts; a per-child report file
-is bound with `runs.all([{ key, agent, task, output }, ...])` (#15874 п.7). The bullet is idempotent:
-
-```bash
-./patches/pi-subagents-skill-output.sh --check     # exit 1 if the bullet is missing
-./patches/pi-subagents-skill-output.sh             # apply
-```
+Three rules died with that rewrite and are not carried: a failed review round must not discard the
+`output:` reports of the children that finished, the artifact is taken against `origin/<base>` and
+not the local base branch, and a reviewer stays in the directory it was given instead of walking into
+a sibling worktree. Each cost a P1 when it was first written up (#15836 п.1, #15733 п.2,
+#15674 п.3). Re-derive a patch from a fixture when one of them starts costing a round again — the old
+scripts are in the history before this change, and `patches/pi-pstack-models.sh` is the shape to
+copy.
 
 ## Voice dictation (Handy + Micme)
 
