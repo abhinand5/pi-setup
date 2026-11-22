@@ -49,7 +49,7 @@ Do **not** install this checkout as an active Pi package in normal use. Loading 
 | Voice dictation | Micme wired to the local [Handy](https://handy.computer) CLI — `alt+m` to dictate, no cloud STT, no API key |
 | Browser automation | Playwright MCP server for interactive UAT on a private Xvfb display (no focus stealing), with a `browser-uat` skill and `uat.sh` environment CLI |
 | Themes | `nebula-pulse`, `opencode`, `tokyo-night`, `one-dark-pro`, and more |
-| tmux | `home/.tmux.conf` — mouse, truecolor through panes, kitty-graphics passthrough, extended keys |
+| tmux | `home/.tmux.conf` — mouse, truecolor through panes, kitty-graphics passthrough, extended keys, session snapshots via resurrect/continuum |
 | Skills | Portable backups of installed Pi/agent skills |
 | Smoke test | Docker restore/sync contract test in `tests/docker-e2e.sh` |
 | Guard rules test | `node --test tests/path-guard.test.mjs` — правила блокировки путей в `write`/`edit` без запуска Pi |
@@ -835,6 +835,35 @@ in the live one):
 | `bind -r m resize-pane -Z` | Zoom toggle; the old `tmp`-window swap trick loses the layout and is unnecessary since tmux 1.8 |
 | `setw -g monitor-activity on` + `set -g visual-activity on` | Activity alerts in the status bar |
 | `set -g status-justify centre` | Centre the window list. `center` is rejected as an unknown value; `absolute-centre` (3.2+) centres it against the terminal, not the status line |
+| `@continuum-save-interval '15'`, `@continuum-restore 'on'` | Resurrect + continuum, see below |
+| `@resurrect-capture-pane-contents 'off'` | Snapshots record windows, panes, cwd and command lines only — never what is scrolled on screen |
+
+### Session survival
+
+The server holds session state in memory only, so when it dies every pane and its children die
+with it and the client prints `server exited unexpectedly`. Nothing on disk can bring those
+processes back; what resurrect restores is the **layout** — windows, panes, cwd, and the command
+lines it recorded.
+
+Plugin directories are per-machine and are not tracked here, so a fresh clone needs them once:
+
+```bash
+mkdir -p ~/.tmux/plugins
+git clone https://github.com/tmux-plugins/tmux-resurrect ~/.tmux/plugins/tmux-resurrect
+git clone https://github.com/tmux-plugins/tmux-continuum ~/.tmux/plugins/tmux-continuum
+```
+
+The `run-shell` lines in the config are wrapped in `if-shell 'test -f …'`, so a machine without the
+clones still sources the file cleanly instead of printing an error on every start.
+
+- `prefix` `C-s` saves by hand, `C-r` restores; continuum also saves every 15 minutes.
+- Snapshots land in `~/.local/share/tmux/resurrect/` — the plugin's XDG default. `~/.tmux/resurrect/`
+  is used instead when that directory already exists.
+- Auto-restore at server start fires only while **no other tmux server is running**, so an
+  accidental restore cannot overwrite a live environment; with another server up, restore by hand.
+- Save/restore inside a pane inherits `$TMUX`, so it targets the right socket. Run `save.sh`
+  directly from a shell with `$TMUX` unset and it snapshots the *default* server, not the one you
+  were thinking of.
 
 Validate a change on a throwaway server before it touches the live one — `-L` gives it its own
 socket, so nothing can leak into the session you are working in:
