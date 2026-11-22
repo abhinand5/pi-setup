@@ -11,6 +11,9 @@ Usage:
   ru-spellcheck --homoglyph-only F   only the hard error class (exit 1 on hit); an input longer
                                      than 40 lines / 500 tokens exits 3 — see "Gate" below
   ru-spellcheck --allow-long F    keep --homoglyph-only on a long input (deliberate bypass)
+  ru-spellcheck --added BASE FILE проверять только строки, добавленные относительно BASE
+                                     (git diff -U0 BASE -- FILE); номера строк остаются файловыми,
+                                     чужие находки в файле не мешают
   ru-spellcheck --add СЛОВО       add a known-good word to the project's allowlist
   ru-spellcheck --add-personal СЛОВО  add it to the personal allowlist instead
   ru-spellcheck --json FILE...    machine-readable
@@ -359,6 +362,48 @@ def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None, 
     return out
 
 
+def added_only_text(path, base):
+    """Строки файла, добавленные относительно `base`, с сохранением файловой нумерации.
+
+    Остальные строки заменяются пустыми, поэтому отчёт называет ту же строку, что редактор, а
+    находки в чужом тексте не появляются (#37: правка шести строк в файле на 233 строки требовала
+    либо полного прогона по чужому долгу, либо клея из `git diff -U0 | grep '^+'`).
+    """
+    import subprocess
+
+    top = subprocess.run(
+        ["git", "-C", os.path.dirname(os.path.abspath(path)) or ".", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if top.returncode != 0:
+        raise RuntimeError(f"{path}: не git-репозиторий, --added не применим")
+    root = top.stdout.strip()
+    rel = os.path.relpath(os.path.abspath(path), root)
+    diff = subprocess.run(
+        ["git", "-C", root, "diff", "-U0", base, "--", rel],
+        capture_output=True, text=True,
+    )
+    if diff.returncode != 0:
+        raise RuntimeError(f"{path}: git diff {base} не вышел: {diff.stderr.strip()}")
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        lines = fh.read().splitlines()
+    added = {}
+    number = 0
+    for line in diff.stdout.splitlines():
+        if line.startswith("@@"):
+            # @@ -a,b +c,d @@ — счёт добавленных начинается с c (d может быть 0)
+            plus = line.split("+", 1)[1].split(" ", 1)[0]
+            start = plus.split(",")[0]
+            number = int(start)
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            added[number] = line[1:]
+            number += 1
+        elif line.startswith(" "):
+            number += 1
+    return "\n".join(added.get(i + 1, "") for i in range(len(lines)))
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip())
@@ -412,8 +457,14 @@ def main(argv):
     for i, a in enumerate(argv):
         if a == "--baseline" and i + 1 < len(argv):
             baseline_path = argv[i + 1]
-    skip = {"--json", "--homoglyph-only", "--allow-long", "--no-baseline", "--baseline"}
-    paths = [a for a in argv if not a.startswith("--") and a != baseline_path]
+    # --added BASE: проверять только то, что добавлено относительно BASE. Аргумент за флагом — не
+    # путь, поэтому он исключается из путей так же, как значение --baseline.
+    added_base = None
+    for i, a in enumerate(argv):
+        if a == "--added" and i + 1 < len(argv):
+            added_base = argv[i + 1]
+    skip = {"--json", "--homoglyph-only", "--allow-long", "--no-baseline", "--baseline", "--added"}
+    paths = [a for a in argv if not a.startswith("--") and a != baseline_path and a != added_base]
     paths = [a for a in paths if a not in skip]
     if not paths:
         return 2
@@ -423,10 +474,16 @@ def main(argv):
     else:
         for p in paths:
             try:
-                with open(p, encoding="utf-8", errors="replace") as fh:
-                    inputs.append((p, fh.read()))
+                if added_base is not None:
+                    inputs.append((p, added_only_text(p, added_base)))
+                else:
+                    with open(p, encoding="utf-8", errors="replace") as fh:
+                        inputs.append((p, fh.read()))
             except (OSError, IsADirectoryError) as exc:
                 print(f"ru-spellcheck: {p}: {exc}", file=sys.stderr)
+                return 2
+            except RuntimeError as exc:
+                print(f"ru-spellcheck: {exc}", file=sys.stderr)
                 return 2
     # Refused, not reported clean: the long-text error class is invisible to this gate.
     if homoglyph_only and not allow_long:

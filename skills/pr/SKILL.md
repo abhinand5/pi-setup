@@ -1,6 +1,6 @@
 ---
 name: pr
-description: "Use when writing a PR body."
+description: "Write or edit a pull request body: draft a new one from the diff, rewrite an existing body through the GitHub REST API (gh pr edit --body-file fails on this server), or regenerate it after a force-push."
 metadata:
   credits:
     skill: show-me
