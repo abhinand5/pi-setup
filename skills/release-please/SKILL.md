@@ -44,10 +44,10 @@ description: >-
 
 ## Когда релиза не будет
 
-Бамп дают только типы из `changelog-sections` в `release-please-config.json` (`feat`, `fix`,
-`refactor` в `msb-calculator-api`). `chore`/`docs`/`test` не бампают версию и в changelog не
-попадают — после такого мержа релизного PR ждать не надо, версия поднимется следующим
-бо-фиксным/фича-мержем. Так и писать в докладе: «смержено #N → релиза нет (docs)».
+Версию поднимают только типы из `changelog-sections` в `release-please-config.json` (`feat`,
+`fix`, `refactor` в `msb-calculator-api`). `chore`/`docs`/`test` версию не поднимают и в changelog
+не попадают — после такого мержа релизного PR ждать не надо, версия вырастет при следующем
+мерже типа `fix` или `feat`. Так и писать в докладе: «смержено #N → релиза нет (docs)».
 
 ## Релизный PR предлагает уже выпущенную версию
 
