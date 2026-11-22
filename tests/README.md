@@ -4,10 +4,12 @@ Run these from the repo root. The full list with one line of scope each is under
 [Manual tests](../README.md#manual-tests) — this page adds only what that list cannot say:
 how to test a script that writes outside the repo.
 
-Nothing here is gated automatically today. `prek.toml` runs its hooks on commit, and
-everything else is manual: `bash -n` on `bin/*` and `*.sh`, `node --test tests/*.test.mjs`,
-the shell tests, `tests/docker-e2e.sh`. No CI job exists yet; a workflow that runs the fast
-checks is in open PR #19. Until it merges, "the tests pass" means someone ran them.
+`.github/workflows/ci.yml` runs the fast layer on every PR: `bash -n` over the helpers and
+scripts, `py_compile` of `bin/ru-spellcheck`, `node --test tests/*.test.mjs`, and every
+`tests/*.sh` in a loop — so a new shell test here is wired the moment it lands, with no edit
+to the workflow. `prek.toml` covers the commit-time hooks. What stays manual is the slow and
+the machine-touching part: `tests/docker-e2e.sh`, and the list under
+[Manual tests](../README.md#manual-tests).
 
 `docker-e2e.sh` is the only test that leaves the machine: it clones this repo from its git
 remote inside a container. `browser-uat-login-proxy.sh` stubs Playwright and fails on

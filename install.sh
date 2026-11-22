@@ -53,6 +53,10 @@ FORCE=0
 BACKUP=0
 BACKUP_DIR=""
 REVERT_DIR=""
+# Файлы, которые restore намеренно оставил живой копии. Собираются построчно и повторяются в сводке в
+# конце: строка "leaving it" тонет в журнале прогона, а последние строки читаются как «всё сошлось»,
+# хотя политика в ~/.pi/agent осталась прежней (20.11.2026 одна такая правка AGENTS.md не доехала).
+NOT_RESTORED=()
 
 usage() {
   cat <<'EOF'
@@ -217,6 +221,7 @@ install_config_if_absent() {
       echo "$label is up to date."
     else
       echo "$label differs from the repo copy ($(diff_lines "$src" "$dst")); leaving it (use --restore --copy-config to overwrite)."
+      NOT_RESTORED+=("$label ($dst)")
     fi
     return 0
   fi
@@ -335,9 +340,10 @@ make_backup() {
       touch "$BACKUP_DIR/.absent-$name"
     fi
   done
-  # Policy files that --restore may overwrite: AGENTS.md and the allowed-model
-  # table it points at. The table is overwritten unconditionally (a stale table
-  # loses delegation runs), so a local edit has to be revertible (#15647).
+  # Policy files worth keeping revertible, and they differ in what restore does with them:
+  # AGENTS.md is the user's own instructions and is left alone without --copy-config, while the
+  # allowed-model table and the session-log recipes are overwritten unconditionally (a stale table
+  # loses delegation runs), so a local edit of those has to be revertible (#15647).
   for name in AGENTS.md docs/delegation-models.md docs/session-logs.md; do
     if [[ -f "$PI_HOME/$name" ]]; then
       mkdir -p "$BACKUP_DIR/$(dirname "$name")"
@@ -944,6 +950,52 @@ install_home_dotfiles() {
 }
 
 install_home_dotfiles
+
+# Сводка того, что restore намеренно не тронул. Последние строки прогона — единственное, что читается
+# целиком, и «Done.» в них означает «прогон закончился», а не «содержимое совпало с репозиторием».
+report_not_restored() {
+  ((${#NOT_RESTORED[@]})) || return 0
+  echo
+  echo "Не восстановлено из репозитория — на машине осталась своя версия:"
+  printf '  - %s\n' "${NOT_RESTORED[@]}"
+  echo "  Забрать версии из $ROOT: ./install.sh --restore --copy-config"
+}
+
+# Смерженное, но не убранное воркдерево не отличить от живого по `git worktree list`: видна ветка и
+# каталог, а доказательство «там нечего терять» — это `merge-base --is-ancestor` (обычный мерж) или
+# `git cherry` (squash: у второго мержа предка нет, и без него дерево кажется неотмерженным).
+warn_prunable_worktrees() {
+  local base entry branch tip ahead dirty
+  base="$(git -C "$ROOT" rev-parse --verify -q origin/main || true)"
+  [[ -n "$base" ]] || base="$(git -C "$ROOT" rev-parse --verify -q main || true)"
+  [[ -n "$base" ]] || return 0
+  while IFS= read -r entry; do
+    [[ -n "$entry" && "$entry" != "$ROOT" && -d "$entry" ]] || continue
+    branch="$(git -C "$entry" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    tip="$(git -C "$entry" rev-parse -q --verify HEAD 2>/dev/null || true)"
+    [[ -n "$branch" && -n "$tip" && "$branch" != "HEAD" ]] || continue
+    how=""
+    if git -C "$ROOT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null; then
+      how="смержено"
+    else
+      # Тот же патч может лежать в базе без коммита-предка (squash): об этом говорит только cherry.
+      ahead="$(git -C "$ROOT" cherry "$base" "$tip" 2>/dev/null | grep -c '^+' || true)"
+      [[ "${ahead:-1}" == "0" ]] && how="патчи уже в базе (squash-мерж)"
+    fi
+    [[ -n "$how" ]] || continue
+    dirty="$(git -C "$entry" status --porcelain 2>/dev/null || true)"
+    if [[ -n "$dirty" ]]; then
+      echo "note: воркдерево $entry ($branch) $how, но есть незакоммиченные правки — убрать после разбора"
+    else
+      echo "note: воркдерево $entry ($branch) $how — можно убрать"
+    fi
+  done < <(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+}
+
+if [[ "$RESTORE" == "1" ]]; then
+  warn_prunable_worktrees
+fi
+report_not_restored
 
 if [[ -n "$BACKUP_DIR" ]]; then
   echo "To revert this install: $ROOT/install.sh --revert '$BACKUP_DIR'"
