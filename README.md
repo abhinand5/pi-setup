@@ -560,6 +560,33 @@ it (#15733 п.2). The block is idempotent and survives `pi update --extensions` 
 ./patches/pi-subagents-review-loop-origin-base.sh             # apply
 ```
 
+### `/review-loop`: the report is a file, the answer is a verdict
+
+`patches/pi-subagents-review-loop-artifacts.sh` requires `output:` on every reviewer and holds two
+paragraphs about it: a failed round must not discard the reports of the children that finished, and
+`git` output must not be piped into `head`/`tail` (the reviewer dies on SIGPIPE). A third rule, added
+in #15929, keeps the report out of the answer: the response carries the path and a three-line verdict,
+because nine reports over four rounds of #15874 were 154 KB in the parent's context while the files
+already held every word (#15874 п.3). Each rule has its own marker, so a machine patched before the
+third rule existed receives it on the next run instead of skipping on the first marker:
+
+```bash
+./patches/pi-subagents-review-loop-artifacts.sh --check     # exit 1 if a rule is missing
+./patches/pi-subagents-review-loop-artifacts.sh             # apply
+```
+
+### `pi-subagents` skill: per-child `output:` only through `runs.all`
+
+`patches/pi-subagents-skill-output.sh` adds one bullet to the packaged skill: a
+`workflow: "parallel"` task accepts `agent`, `task`, `cwd` and `model` only, so an `output` there
+fails the whole call with `unsupported fields: output` before a child starts; a per-child report file
+is bound with `runs.all([{ key, agent, task, output }, ...])` (#15874 п.7). The bullet is idempotent:
+
+```bash
+./patches/pi-subagents-skill-output.sh --check     # exit 1 if the bullet is missing
+./patches/pi-subagents-skill-output.sh             # apply
+```
+
 ## Voice dictation (Handy + Micme)
 
 `alt+m` toggles dictation inside Pi. Audio is recorded with `ffmpeg`, transcribed by the local [Handy](https://handy.computer) CLI, and appended to the focused editor for review — no cloud STT, no API key.

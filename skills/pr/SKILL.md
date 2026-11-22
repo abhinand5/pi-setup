@@ -9,6 +9,15 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
+## Title
+
+The title is the commit that lands on the base branch, so in a repository with release-please it is
+also the changelog line of the next release: only the types named in `changelog-sections` raise the
+version (`feat`, `fix`, `refactor` in `msb-calculator-api`). A change a consumer must receive is
+`fix` or `feat` even when it looks like packaging — a lockfile bump, a build script, a `dist`
+artifact. `chore(dist)` merges and never reaches a release (#15878 п.3). Read `changelog-sections`
+in `release-please-config.json`; do not assume the default type list.
+
 ## Editing the body of an existing PR
 
 `gh pr edit <n> --body-file …` is not a reliable path here: on a repository whose GraphQL surface still
