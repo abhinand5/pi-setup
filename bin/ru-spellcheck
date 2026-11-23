@@ -34,7 +34,9 @@ in an allowlist: it is vocabulary the agent invented and must not legitimize (в
 the deny file is not something an agent edits to legalize its own wording. Matching is exact on
 the word form (no stem expansion: `сет` must not ban `сети`), unless the entry ends with `*`:
 `ассерт*` covers `ассерты`/`ассертов`, because the short forms are the ones that leak into SPELLING
-with a false suggestion (#15836 п.3). The denylist is not consulted by
+with a false suggestion (#15836 п.3). An entry may be Latin (`tip`): it is matched on the segments
+of any script, because a pure-Latin token never reaches the dictionary pass and would otherwise be
+banned on paper only. The denylist is not consulted by
 `--homoglyph-only`: that gate is about scripts, and mixed-script deny entries are caught there as
 HOMOGLYPH anyway.
 
@@ -357,12 +359,6 @@ def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None, 
         line_starts.append(m.end())
     for m in TOKEN.finditer(hidden):
         tok = text[m.start():m.end()].strip(EDGE)
-        if not CYR.search(tok):
-            continue
-        if tok.isupper() and len(tok) <= 5 and not LAT.search(tok):
-            continue  # БД, ВР, ОР: abbreviation, not prose
-        if len(CYR.findall(tok)) < 3 or ABBREV.fullmatch(tok):
-            continue  # "п.1", "т.е.", "п.п.", single letters: not prose
         segs = segments(tok)
         # 1. hard error: one segment mixing scripts, or Latin diacritics in a Cyrillic word
         bad_script = any(SCRIPT_MIX.search(s) and CYR.search(s) for s in segs)
@@ -372,15 +368,29 @@ def check_text(text, d, allow, path, homoglyph_only, baseline=None, stems=None, 
             continue
         if homoglyph_only:
             continue
+        # 2. deny, over the segments of any script and before the Cyrillic-only filters below: an
+        # entry may be Latin (`tip`), and a token without Cyrillic never reaches the dictionary
+        # pass — behind the filters that entry could only ban a word on paper. The filters stay
+        # below, so an identifier or an abbreviation is still not dragged into hunspell.
         deny = deny or set()
-        # 2. dictionary miss, per segment (so "golden-фикстуры" is judged on "фикстуры")
+        denied = set()
         for s in segs:
-            if not CYR.search(s) or LAT.search(s):
-                continue  # pure-Latin segment of a compound: not our business
             if is_denied(s, deny):
                 # Приоритет над allow, словарём и baseline: слово не вернуть, его только заменить.
                 findings.append((m.start(), "DENY", s.rstrip("."), "слово из deny-списка"))
-                continue
+                denied.add(s)
+        if not CYR.search(tok):
+            continue  # pure-Latin token: the dictionary has nothing to say about it
+        if tok.isupper() and len(tok) <= 5 and not LAT.search(tok):
+            continue  # БД, ВР, ОР: abbreviation, not prose
+        if len(CYR.findall(tok)) < 3 or ABBREV.fullmatch(tok):
+            continue  # "п.1", "т.е.", "п.п.", single letters: not prose
+        # 3. dictionary miss, per segment (so "golden-фикстуры" is judged on "фикстуры")
+        for s in segs:
+            if not CYR.search(s) or LAT.search(s):
+                continue  # pure-Latin segment of a compound: not our business
+            if s in denied:
+                continue  # already reported as DENY above
             if is_known(d, s, allow):
                 continue
             if len(segs) > 1 and is_fragment(s, stems or []):

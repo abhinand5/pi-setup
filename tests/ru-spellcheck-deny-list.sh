@@ -105,6 +105,25 @@ fi
 printf 'Резолв прошёл без кода.\n' > "$WORK/no-textile.md"
 out="$("$TOOL" "$WORK/no-textile.md" 2>&1)" && fail "слово вне Textile-кода не проверено: $out"
 
+# Запись латиницей: токен без кириллицы до словаря не доходит, поэтому deny проверяется перед
+# фильтрами — иначе `tip` не давал бы находок никогда и лежал бы в списке только на бумаге.
+printf 'tip\n' > "$XDG_CONFIG_HOME/ru-spellcheck/deny.txt"
+printf 'Полезный tip и TIP в прозе.\n' > "$WORK/latin.md"
+out="$("$TOOL" "$WORK/latin.md" 2>&1)" && fail "латинская запись deny-списка не сработала: $out"
+case "$out" in
+    *DENY*) ;;
+    *) fail "нет находки DENY для латинской записи deny-списка: $out" ;;
+esac
+case "$out" in
+    *SPELLING*) fail "латинская запись уехала в SPELLING: $out" ;;
+    *) ;;
+esac
+# Точное совпадение остаётся точным, а «тип» — верное слово: ни находки, ни ложного DENY.
+printf 'Тип и tips и types в порядке.\n' > "$WORK/latin-ok.md"
+"$TOOL" "$WORK/latin-ok.md" >/dev/null || fail "верное «тип» или plural «tips» дали находку: $("$TOOL" "$WORK/latin-ok.md" 2>&1)"
+# Гейт по скриптам deny-список не читает: латинская запись его не трогает.
+"$TOOL" --homoglyph-only "$WORK/latin.md" >/dev/null || fail "--homoglyph-only стал читать deny-список"
+
 # Адреса почты не маскируются как Textile-код — и два адреса в строке не прячут прозу между ними.
 printf 'Пишите на denis@example.com.\n' > "$WORK/mail.md"
 "$TOOL" "$WORK/mail.md" > /dev/null 2>&1 || fail "один адрес почты дал находку: $("$TOOL" "$WORK/mail.md" 2>&1)"
