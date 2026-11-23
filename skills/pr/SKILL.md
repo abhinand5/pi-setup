@@ -18,6 +18,16 @@ version (`feat`, `fix`, `refactor` in `msb-calculator-api`). A change a consumer
 artifact. `chore(dist)` merges and never reaches a release (#15878 п.3). Read `changelog-sections`
 in `release-please-config.json`; do not assume the default type list.
 
+`msb-calculator-api` now enforces the rule instead of relying on it (#15930 п.3): its `release-title`
+gate takes the list of dist paths from the package's own `dist-contents-check.php`, so a PR that
+touches only packaging — `.gitattributes`, `composer.json`, `README.md`, consumer docs — needs a
+release type just as a `src/` change does. Check the planned title before pushing, rather than
+learning the type list from a red check:
+
+```bash
+php scripts/ci/release-title-check.php --pr origin/main '<the title you plan to use>'
+```
+
 ## Editing the body of an existing PR
 
 `gh pr edit <n> --body-file …` is not a reliable path here: on a repository whose GraphQL surface still
