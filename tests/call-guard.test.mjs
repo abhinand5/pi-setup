@@ -10,6 +10,9 @@
 // #15749 п.5 (`git branch -a` → 2168 строк, 50 КБ).
 
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { classifyCall, splitSegments } from "../extensions/call-guard-core.mjs";
@@ -158,13 +161,81 @@ test("sed -i блокируется во всех обычных формах", 
 
 // Обратная сторона: `sed` без `-i` — фильтр текста, его блокировать нельзя; поиск строки «sed -i»
 // по репозиторию и heredoc-набор замен тоже проходят (решение #15849 п.3 их разрешает).
-test("sed без -i, поиск упоминания и heredoc не блокируются", () => {
+// `sed -n 'N,Mp' <файл>` сюда больше не относится: это чтение, его стережёт правило 4 (#15906 п.4).
+test("sed без -i в конвейере, поиск упоминания и heredoc не блокируются", () => {
 	for (const command of [
-		"sed -n '1,20p' src/Foo.php",
 		"sed 's/a/b/' src/Foo.php | head",
 		'rg -n "sed -i" docs/',
 		"python3 - <<'PY'\nimport io\nPY",
 	]) {
+		assert.equal(classifyCall(command).allowed, true, command);
+	}
+});
+
+// Правило 4 (#15906 п.4, #15909 п.4): файл до 50 КБ читается только `read`, поиск — `fffind`/`ffgrep`,
+// а `grep -r` по дому умер по таймауту дважды. Пути ниже настоящие: размер файла — часть правила.
+const fixtures = mkdtempSync(join(tmpdir(), "call-guard-"));
+const smallFile = join(fixtures, "small.md");
+const bigFile = join(fixtures, "big.md");
+const subdir = join(fixtures, "src");
+writeFileSync(smallFile, "x".repeat(2048));
+writeFileSync(bigFile, "x".repeat(51201));
+writeFileSync(join(fixtures, "keep.txt"), "y");
+const { mkdirSync } = await import("node:fs");
+mkdirSync(subdir, { recursive: true });
+writeFileSync(join(subdir, "file.php"), "x");
+test.after(() => rmSync(fixtures, { recursive: true, force: true }));
+
+test("чтение файла через sed -n, cat и grep -n блокируется", () => {
+	for (const command of [
+		`sed -n '1,20p' ${smallFile}`,
+		`sed -n 1,20p ${smallFile}`,
+		`cat ${smallFile}`,
+		`grep -n foo ${smallFile}`,
+		"sed -n '1,20p' src/Foo.php",
+	]) {
+		const verdict = classifyCall(command);
+		assert.equal(verdict.allowed, false, command);
+		assert.match(verdict.hint, /read|ffgrep/, command);
+	}
+});
+
+test("файл больше 50 КБ, каталог и конвейер чтения остаются разрешёнными", () => {
+	for (const command of [
+		`sed -n '1,200p' ${bigFile}`,
+		`cat ${bigFile}`,
+		`grep -n foo ${bigFile}`,
+		`grep -n foo ${subdir}`,
+		`sed 's/a/b/' ${smallFile} | head`,
+	]) {
+		assert.equal(classifyCall(command).allowed, true, command);
+	}
+});
+
+test("конвейер не обходит правило чтения, а запись через cat — не чтение", () => {
+	for (const command of [
+		`cat ${smallFile} | head -5`,
+		`sed -n '1,20p' ${smallFile} | head`,
+		`grep -n foo ${smallFile} | wc -l`,
+	]) {
+		assert.equal(classifyCall(command).allowed, false, command);
+	}
+	for (const command of [
+		"cat > /tmp/guard-scratch.txt <<'EOF'\ntext\nEOF",
+		`cat ${smallFile} > /tmp/guard-scratch-copy.txt`,
+		'printf "x" | grep -n x -',
+	]) {
+		assert.equal(classifyCall(command).allowed, true, command);
+	}
+});
+
+test("grep -r по домашнему каталогу и корню репозитория блокируется", () => {
+	for (const command of ["grep -r foo /home/denis", "grep -rn foo .", "grep -r foo ~/", "grep --recursive foo /home/denis/"]) {
+		const verdict = classifyCall(command);
+		assert.equal(verdict.allowed, false, command);
+		assert.match(verdict.reason, /grep -r/, command);
+	}
+	for (const command of ["grep -r foo src/", `grep -rn foo ${subdir}`, "rg -n 'foo' .", "grep -r foo ~/p"]) {
 		assert.equal(classifyCall(command).allowed, true, command);
 	}
 });

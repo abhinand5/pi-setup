@@ -1,6 +1,6 @@
 // @file: call-guard-core.mjs
 // @description: Решение «пропустить / заблокировать» для bash-вызова — без Pi API.
-// @dependencies: нет
+// @dependencies: node:fs (размер файла в правиле чтения)
 // @created: 2026-11-19
 //
 // Вынесено из call-guard.ts, чтобы правила проверялись тестом без запуска сессии Pi:
@@ -20,11 +20,30 @@
 //    без проверки уникальности вхождения, и диффа до правки не видно. Набор замен через heredoc
 //    остаётся разрешённым (это записано в AGENTS.md); блокируется именно in-place правка файла,
 //    а `sed` без `-i` (фильтр текста в конвейере) проходит.
+// 4. **Чтение файла и поиск по всему домашнему каталогу через bash** (#15906 п.4, #15909 п.4). Правило
+//    «файл читает `read`, поиск делает `ffgrep`/`fffind`» жило в AGENTS.md и не держалось: 26 вызовов
+//    `sed -n 'N,Mp'` против 6 `read` в одной сессии, около 20 `sed -n` и 30 `grep -n`/`ls` в другой,
+//    а два `grep -r … /home/денis` умерли по таймауту (60 с и 10 с). Файл до 50 КБ читается только
+//    `read` с `offset`/`limit`; файл больше 50 КБ и конвейер не трогаются.
 //
 // Осознанный обход — PI_CALL_GUARD_ALLOW=1 (как у остальных сторожей pi-setup).
 //
 // Границы названы честно: разбор команд строковый и не знает экранирования вложенного шелла
 // (`bash -c '…'`). Ложное срабатывание лечится обходом, а не правкой правила на ходу.
+
+import { statSync } from "node:fs";
+
+/** Порог «файл больше 50 КБ»: такой файл через `sed -n`/`cat` читать разрешено (51200 байт). */
+const READ_LIMIT_BYTES = 51200;
+
+/** Диапазон печати `sed -n`: `1,20p`, `5p`, `120,400p`. */
+const SED_PRINT_RANGE = /^\d+(?:,\d+)?p$/;
+
+/**
+ * Корень репозитория и весь домашний каталог: поиск по ним дороже выгоды. Подкаталог (`~/p`,
+ * `/home/denis/p`) в список не входит — там поиск законный, и правило не должно его запрещать.
+ */
+const BROAD_PATHS = [".", "./", "~", "~/", "$HOME", "${HOME}", "/home/denis", "/home/denis/"];
 
 /** Команда, у которой нет полезной части: только переход в каталог, `true`, `:` или `exit 0`. */
 const NOOP_SEGMENT = /^(?:true|:)\s*$|^exit(?:\s+0)?\s*$/;
@@ -50,6 +69,131 @@ const GIT_REMOTE_SHOW = /^git\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)\s+)?remote\s+sho
  * гейт именно на `sed -i`, а многошаговые замены остаются разрешёнными с `assert count==1`.
  */
 const SED_IN_PLACE = /^sed\b[^|;]*\s(?:-i\S*|--in-place(?:=\S*)?)(?=\s|$)/;
+
+/**
+ * Слова сегмента: кавычки снимаются, перенаправления остаются отдельными словами.
+ *
+ * @param {string} segment
+ * @returns {string[]}
+ */
+function words(segment) {
+	const out = [];
+	const re = /'([^']*)'|"([^"]*)"|(\S+)/g;
+	let match;
+	while ((match = re.exec(segment)) !== null) {
+		out.push(match[1] ?? match[2] ?? match[3]);
+	}
+	return out;
+}
+
+/** Флаг, а не операнд: `-n`, `-rn`, `--quiet`; одинокий `-` — stdin, а не флаг. */
+function isFlag(token) {
+	return token.startsWith("-") && token !== "-";
+}
+
+/**
+ * Что лежит по пути: `{ isFile, size }`, либо `null` — путь не проверен (относительный, нет такого).
+ *
+ * @param {string} path
+ * @returns {{ isFile: boolean, size: number } | null}
+ */
+function probeFile(path) {
+	try {
+		const stat = statSync(path);
+		return { isFile: stat.isFile(), size: stat.size };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Файл читается только через `read`: размер не доказан большим (или не проверен вовсе).
+ *
+ * @param {string} path
+ * @returns {boolean}
+ */
+function readsSmallFile(path) {
+	const probe = probeFile(path);
+	return probe === null || probe.size <= READ_LIMIT_BYTES;
+}
+
+/** Операнды сегмента: без флагов, без heredoc-меток и перенаправлений. */
+function operands(args) {
+	return args.filter((token) => !isFlag(token) && !token.startsWith("<") && !token.includes(">"));
+}
+
+/**
+ * Правило чтения: `sed -n`, `cat <файл>`, `grep -n <файл>` по файлу до 50 КБ и `grep -r` по дому.
+ *
+ * @param {string} segment
+ * @returns {{ allowed: boolean, reason: string, hint: string } | null}
+ */
+function readingVerdict(segment) {
+	const parts = words(segment);
+	const command = parts[0];
+	if (command !== "sed" && command !== "cat" && command !== "grep") return null;
+
+	const args = parts.slice(1);
+	const hintRead = "Чтение файла — `read` с `offset` и `limit` (нумерация строк, обрезка вывода, дифф), поиск по содержимому — `ffgrep`, поиск по пути — `fffind`. Осознанно — PI_CALL_GUARD_ALLOW=1.";
+
+	if (command === "sed") {
+		const quiet = args.some((token) => token === "-n" || token === "--quiet" || token === "--silent"
+			|| /^-[a-zA-Z]*n[a-zA-Z]*$/.test(token));
+		if (!quiet) return null;
+		const script = args.find((token) => SED_PRINT_RANGE.test(token));
+		if (script === undefined) return null;
+		const file = operands(args.slice(args.indexOf(script) + 1))[0];
+		if (file === undefined || file === "-" || !readsSmallFile(file)) return null;
+		return {
+			allowed: false,
+			reason: "`sed -n 'N,Mp' <файл>` — чтение файла через bash; преимуществ перед `read` у него нет.",
+			hint: hintRead,
+		};
+	}
+
+	if (command === "cat") {
+		// `cat > файл`, `cat >> журнал`, `cat <<EOF` — это запись и heredoc, а не чтение: их правило
+		// не трогает (иначе блокировался бы самый обычный способ создать временный файл).
+		if (args.some((token) => token.includes(">") || token.startsWith("<"))) return null;
+		const files = operands(args);
+		if (files.length === 0 || files.includes("-")) return null;
+		if (!files.some((file) => readsSmallFile(file))) return null;
+		return {
+			allowed: false,
+			reason: "`cat <файл>` — то же чтение, что и `read`, но без номеров строк и без номера области.",
+			hint: hintRead,
+		};
+	}
+
+	const recursive = args.some((token) => token === "--recursive" || token === "--dereference-recursive"
+		|| /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(token));
+	const positional = operands(args);
+	if (recursive) {
+		const paths = positional.slice(1);
+		const broad = paths.some((path) => BROAD_PATHS.includes(path) || path === "/home/denis/.");
+		if (!broad) return null;
+		return {
+			allowed: false,
+			reason: "`grep -r` по домашнему каталогу или корню репозитория: два таких вызова в одной сессии умерли по таймауту (60 с и 10 с).",
+			hint: "Сужьте путь или берите `ffgrep pattern='…' path='…' exclude='…' limit=20` (он сразу без зеркал); для особого случая — `rg` с `--glob '!…'`. Осознанно — PI_CALL_GUARD_ALLOW=1.",
+		};
+	}
+
+	const numbered = args.some((token) => token === "--line-number" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(token));
+	const files = positional.slice(1);
+	// `grep -n шаблон -` читает stdin: файла нет, и правило чтения файла к нему не относится.
+	if (!numbered || files.length === 0 || files.includes("-")) return null;
+	const suspicious = files.some((file) => {
+		const probe = probeFile(file);
+		return probe !== null && !probe.isFile ? false : readsSmallFile(file);
+	});
+	if (!suspicious) return null;
+	return {
+		allowed: false,
+			reason: "`grep -n <файл>` — поиск по файлу через bash; `ffgrep` учитывает `.gitignore` и держит вывод в `limit`.",
+		hint: hintRead,
+	};
+}
 
 /**
  * Обёртки перед командой: `sudo`, `command`, `env -u X`, `GIT_PAGER=cat`, `time`, их флаги и
@@ -96,6 +240,30 @@ function unwrapped(segment) {
 		if (next === null || next === text || next === "") return next ?? text;
 		text = next;
 	}
+}
+
+/**
+ * Первая ступень конвейера: текст до первого `|` вне кавычек. `grep -n 'a|b' файл` — один сегмент,
+ * а не две ступени; без этого разбор кавычек съел бы шаблон и заблокировал чтение зря.
+ *
+ * @param {string} segment
+ * @returns {string}
+ */
+export function firstPipelineStage(segment) {
+	let quote = null;
+	for (let i = 0; i < segment.length; i += 1) {
+		const char = segment[i];
+		if (quote !== null) {
+			if (char === quote) quote = null;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			continue;
+		}
+		if (char === "|") return segment.slice(0, i);
+	}
+	return segment;
 }
 
 /**
@@ -175,6 +343,13 @@ export function classifyCall(command, options = {}) {
 	}
 
 	for (const raw of segments) {
+		// Чтение проверяется и в конвейере, по первой ступени: `cat файл | head` — тот же `cat`, и
+		// именно `| head` был самым естественным обходом правила (замер ревью: 26 вызовов `sed -n`,
+		// ради которых правило написано, проходили ровно так). Правило 2 наоборот требует конвейер
+		// как признак фильтра, поэтому ниже сегменты с `|` по-прежнему пропускаются.
+		const reading = readingVerdict(unwrapped(firstPipelineStage(raw)));
+		if (reading !== null) return reading;
+
 		if (/\|/.test(raw)) continue;
 		const segment = unwrapped(raw);
 

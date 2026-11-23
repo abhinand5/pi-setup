@@ -12,8 +12,9 @@
   репозиторий обратно. Что именно едет — README → «Sync live Pi tweaks back to GitHub».
 - Доставка правки — PR в `main` (`main` защищён); ветка — от `origin/main`, иначе в PR уезжает чужой
   коммит (проверка `git merge-base --is-ancestor origin/main HEAD` есть в CI).
-- Разбор скрипта — `rg -n '<ключ>' install.sh sync.sh`, а не `cat`: `grep -n 'install_bin_helpers' install.sh`
-  отвечает на вопрос «как helper попадает в PATH» одной строкой.
+- Разбор скрипта — `rg -n '<ключ>' install.sh sync.sh`, а не `cat`: `rg -n 'install_bin_helpers' install.sh`
+  отвечает на вопрос «как helper попадает в PATH» одной строкой. Именно `rg`, а не `grep -n`: последний
+  сторож `call-guard` отклоняет как чтение файла через bash (#15909 п.4).
 - Прогоны: `node --test tests/*.test.mjs` (правила сторожей), `bash tests/ru-spellcheck-*.sh`
   (словарь, deny-список, длинный ввод), `bash tests/browser-uat-login-proxy.sh` (uat login).
   `tests/docker-e2e.sh` — полный install в контейнере, минуты, вне CI намеренно.

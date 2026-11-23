@@ -177,6 +177,36 @@ for path in sorted(glob.glob(os.path.join(sys.argv[1], '*.jsonl'))):
 PY
 ```
 
+## 8. Who is working on #N right now
+
+The Redmine claim says who *took* the task, not whether that session is still alive: a session that died
+right after the claim leaves a fresh note, no branch, no worktree (#15874 п.4). Two steps answer the
+question cheaply — which logs mention the number, and when each last wrote anything:
+
+```bash
+TASK=15815
+SESSIONS="$HOME/.pi/agent/sessions/--home-denis-p-msl-msb-lk--"
+rg -l "#$TASK" "$SESSIONS" | while read -r log; do
+python3 - "$log" <<'PY'
+import json, os, sys, time
+path = sys.argv[1]
+last = None
+for line in open(path, encoding='utf-8'):
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        continue
+    last = rec.get('timestamp') or last
+age = (time.time() - os.path.getmtime(path)) / 60
+print(f"{os.path.basename(path)[:32]}  last event {last}  mtime {age:.0f} min ago")
+PY
+done
+```
+
+Under ten minutes since the last event — probably a live session, ask it or wait; hours — the claim is
+dead and the task can be taken. The same number in several logs is normal: a retro quotes it in other
+sessions, so the last event of each file is what tells a live conversation from a mention.
+
 ## Counting and arithmetic
 
 Numbers over these logs are `python3`, not `jq`: `jq` is for picking fields, `python3` for sums,

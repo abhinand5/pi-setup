@@ -38,8 +38,9 @@ with a false suggestion (#15836 п.3). The denylist is not consulted by
 `--homoglyph-only`: that gate is about scripts, and mixed-script deny entries are caught there as
 HOMOGLYPH anyway.
 
-Gate: `--homoglyph-only` is the gate for short prose (a chat message, a Redmine note, a commit
-body): zero false positives, exit 1 on a hit. It sees only script mixing, so a long document —
+Gate: `--homoglyph-only` is the gate for short prose (a chat message, a Redmine note): zero false
+positives, exit 1 on a hit. A commit body is usually longer than 40 lines, so it takes the full
+check (or `--allow-long`) instead: `ru-spellcheck - < /tmp/msg.txt`. It sees only script mixing, so a long document —
 a hand-off note, a README, a task description — passes it while losing its vowels (сесии,
 велечину, скрыпт), and that class needs the dictionary. A long input is therefore refused with
 exit 3 and a hint to run the full check, rather than reported clean (#15799 п.2). The threshold
@@ -298,6 +299,39 @@ def mask(text):
     return text
 
 
+# Окончания, которые словарь иногда знает не для всех основ: творительный «маржой», дательный
+# «марже». Список узкий намеренно: `-ы`/`-и` здесь нет, потому что именно ими отличается класс
+# редукции гласных (`деньгы`, `сесии`), ради которого проверка и существует (#15877 п.4).
+FORM_ENDINGS = ("ыми", "ими", "ого", "его", "ому", "ему", "ою", "ею", "ой", "ей", "ам", "ям",
+                "ах", "ях", "ом", "ем", "ов", "ев", "ью", "а", "я", "о", "е", "у", "ю", "ь")
+
+# Чем может кончаться словарная основа: существительное или прилагательное в именительном.
+BASE_TAILS = ("а", "я", "о", "е", "ь", "ый", "ая", "ое")
+
+
+def has_dictionary_base(d, low):
+    """Словоформа со словарной основой: `маржой` -> `маржа`.
+
+    enchant знает «маржа», но не творительный «маржой» (в словаре флаг без падежных форм), и верное
+    слово уходило в SPELLING с подсказкой «баржой». Стем-сверка по уже стоящим в allow словам этого
+    не лечила: `--add` на пробел словаря правилами запрещён (#15860 п.8, #15877 п.4).
+    """
+    for ending in FORM_ENDINGS:
+        if not low.endswith(ending):
+            continue
+        base = low[: -len(ending)]
+        if len(base) < 4:
+            continue
+        if d.check(base):
+            # Основа сама по себе есть в словаре — значит это опечатка «слово + гласная»: `документо`,
+            # `сервисо`, `системо`, а не падеж слова с другой основой. Замер ревью: все девять
+            # таких слов проходили именно здесь, а у цели правки (`марж`) основы в словаре нет.
+            continue
+        if any(d.check(base + tail) for tail in BASE_TAILS):
+            return True
+    return False
+
+
 def is_known(d, word, allow):
     low = word.lower().strip(".,;:!?«»()\"'")
     if not low or low in allow:
@@ -306,7 +340,9 @@ def is_known(d, word, allow):
         return True
     variants = {low, low.replace("ё", "е"), low.replace("е", "ё")}
     caps = {v.capitalize() for v in variants} | variants
-    return any(d.check(v) for v in caps)
+    if any(d.check(v) for v in caps):
+        return True
+    return has_dictionary_base(d, low)
 
 
 def segments(tok):
