@@ -144,6 +144,37 @@ human-readable label used in the permission prompt. When a call is rejected for
 an unknown field, run `describeTool`/`mcp describe` on that tool instead of
 retrying with another guess.
 
+## Reading values with `browser_evaluate`
+
+Return the projection, not the page. An `innerText`/`textContent` of a container
+took a 305 KB answer (truncated by the response limit) in a single UAT, and the
+number it was after was still read from the database afterwards (#15970).
+
+```js
+// Only the fields the check needs — one object per row, never the container text.
+() => [...document.querySelectorAll('[data-param-id]')]
+  .map(el => ({ id: el.dataset.paramId, text: el.textContent.trim() }))
+```
+
+```js
+// A single value: selector from the project skill, plus a stable id in the answer.
+() => {
+  const el = document.querySelector('[data-param-id="1501"]');
+  return { id: '1501', text: el ? el.textContent.trim() : null };
+}
+```
+
+Rules that follow:
+
+- **A number has one source of truth, and it is rarely the DOM.** If the project
+  has a query or a parity tool for it, read the number there; `browser_evaluate`
+  confirms what the form *shows*, it does not produce report values.
+- **Never return `innerText` / `innerHTML` of a container** to "look at the block":
+  the answer is unbounded and gets truncated, so the fact you needed may be the
+  part that was cut.
+- **`$$`-style sweeps over `button, a, input` return hundreds of nodes.** Project
+  to `{id, text}` and cap the list, or select by text/`data-*` instead.
+
 ## Project reporting contracts
 
 This skill owns *mechanics*: launching, interacting, waiting, capturing, rescuing a
