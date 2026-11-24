@@ -13,7 +13,8 @@ the machine-touching part: `tests/docker-e2e.sh`, and the list under
 
 `docker-e2e.sh` is the only test that leaves the machine: it clones this repo from its git
 remote inside a container. `browser-uat-login-proxy.sh` stubs Playwright and fails on
-`goto`, so it reaches no network at all.
+`goto`, so it reaches no network at all. `browser-uat-login-success.sh` stubs it as well —
+that one checks what counts as a successful login (the session, or the URL), not the proxy.
 
 ## Testing a script that writes to `$HOME`
 

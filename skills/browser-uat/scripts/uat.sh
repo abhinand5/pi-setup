@@ -489,7 +489,7 @@ cmd_login() {
       --code-field) code_field="${2:?--code-field needs a selector}"; shift 2 ;;
       --send-selector) send_selector="${2:?--send-selector needs a selector}"; shift 2 ;;
       --submit-selector) submit_selector="${2:?--submit-selector needs a selector}"; shift 2 ;;
-      --success) success_frag="${2:?--success needs a URL fragment}"; shift 2 ;;
+      --success) success_frag="${2:?--success needs a path}"; shift 2 ;;
       --state) state="${2:?--state needs a path}"; shift 2 ;;
       --timeout) timeout="${2:?--timeout needs milliseconds}"; shift 2 ;;
       --proxy-server) proxy_server="${2:?--proxy-server needs a URL}"; shift 2 ;;
@@ -510,7 +510,9 @@ uat.sh login — log in on the server side and save the browser state
   --code-field SELECTOR   default [name="LoginForm[code]"]
   --send-selector SEL     button that requests the code (form may need it first)
   --submit-selector SEL   default button[type=submit]
-  --success FRAGMENT      URL fragment meaning "logged in", default /admin
+  --success PATH          path only an authenticated session sees, default /admin;
+                        it is also probed with the new cookies, so a stand that
+                        lands on "/" still counts as logged in (#16027 п.2)
   --state PATH            write the state here instead of the profile path
   --timeout MS            per-step timeout, default 20000 (env UAT_LOGIN_TIMEOUT)
   --proxy-server URL      proxy for the login browser; default is the one in the base

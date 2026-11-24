@@ -21,7 +21,10 @@
 //   UAT_LOGIN_SEND_SELECTOR   button that requests the code (optional; the form
 //                             may render the code field only after it is clicked)
 //   UAT_LOGIN_SUBMIT_SELECTOR submit button, default button[type=submit]
-//   UAT_LOGIN_SUCCESS         URL fragment that means "logged in", default /admin
+//   UAT_LOGIN_SUCCESS         path only an authenticated session sees, default /admin.
+//                             The login passes if the browser landed under it, or if a
+//                             request to it with the new cookies is answered — a stand may
+//                             send a logged-in session to "/" instead (#16027 п.2)
 //   UAT_LOGIN_TIMEOUT         step timeout in ms, default 20000
 //   UAT_LOGIN_PROXY_SERVER    proxy for the login browser (optional)
 //   UAT_LOGIN_PROXY_BYPASS    proxy bypass list, comma-separated (optional)
@@ -60,6 +63,7 @@ const proxyBypass = env.UAT_LOGIN_PROXY_BYPASS || '';
 // Chromium has no "direct" switch of its own: --no-proxy-server is the only way to pin the
 // direct route, so it is passed explicitly instead of relying on the environment.
 const noProxy = env.UAT_LOGIN_NO_PROXY === '1';
+const timeout = Number(env.UAT_LOGIN_TIMEOUT || 20000);
 
 // "Under --success" is not enough on its own: with the default /admin the login
 // page itself is /admin/login/index, so a rejected code would look like a
@@ -68,7 +72,45 @@ function loggedIn(current) {
   const path = current.pathname;
   return path.startsWith(success) && !path.includes('/login');
 }
-const timeout = Number(env.UAT_LOGIN_TIMEOUT || 20000);
+
+// The landed URL alone says "login failed" about a working session: on the farm the browser ends up
+// on "/" after a successful submit, not under /admin (#16027 п.2 — three cookies written and
+// "вход не прошёл — страница /, ожидался путь /admin"). So when the URL does not land under
+// --success, the app itself is asked: a request to --success with the cookies just obtained should
+// be answered outside the login area. A guest is redirected there to the sign-in page (any path
+// with /login), an authenticated session is not.
+//
+// `kind` keeps the outcomes apart, because "вход не прошёл" about a live session with no backend
+// access, or about a probe that never reached the stand, sends the reader hunting the wrong thing:
+//   session     — authenticated session, access to --success granted
+//   guest       — redirected into the login area, or a 401: the login itself did not take
+//   login-area  — --success itself points into the login area; no request is made
+//   forbidden   — 403: session exists, but this user has no access to --success
+//   broken      — 404/5xx: the path is wrong or the stand is sick, not the login
+//   unchecked   — the probe did not reach the stand (network, proxy)
+async function probeSuccess(context) {
+  try {
+    const probeUrl = new URL(success, url).toString();
+    // The same asymmetry the URL predicate already rejects: /admin/login/index answers 200 to a
+    // guest, so a --success pointing into the login area would "confirm" a failed login.
+    if (/\/login/.test(new URL(probeUrl).pathname)) return { ok: false, kind: 'login-area' };
+    const response = await context.request.get(probeUrl, {
+      maxRedirects: 0,
+      failOnStatusCode: false,
+      timeout: Math.max(timeout, 15000),
+    });
+    const status = response.status();
+    const location = response.headers().location || '';
+    if (status === 401) return { ok: false, status, kind: 'guest' };
+    if (status === 403) return { ok: false, status, kind: 'forbidden' };
+    if (status >= 400) return { ok: false, status, kind: 'broken' };
+    if (status < 200) return { ok: false, status, kind: 'broken' };
+    if (/\/login/.test(location)) return { ok: false, status, kind: 'guest' };
+    return { ok: true, status, kind: 'session' };
+  } catch (error) {
+    return { ok: false, status: 'ошибка запроса: ' + String(error).split('\n')[0], kind: 'unchecked' };
+  }
+}
 
 function usage(message) {
   console.error(`uat-login: ${message}`);
@@ -77,6 +119,16 @@ function usage(message) {
 }
 
 if (!url || !phone || !code || !statePath) usage('не заданы обязательные переменные окружения');
+
+// A root --success degenerates both checks: startsWith('/') is always true, and the public "/"
+// answers 200 to a guest too — so a rejected login would be written as a success and overwrite a
+// working session in current.json (#16027 п.2).
+if (success === '/') {
+  console.error('uat-login: --success «/» не годится: и проверка по адресу, и проверка запросом вырождаются —');
+  console.error('uat-login: публичный / отвечает 200 и гостю, поэтому отклонённый вход запишется как успешный.');
+  console.error('uat-login: оставь дефолтный /admin — вход подтверждается запросом к нему с полученными cookie.');
+  process.exit(2);
+}
 
 function loadPlaywright() {
   const root = env.UAT_PLAYWRIGHT_ROOT || '';
@@ -148,9 +200,8 @@ try {
   await page.fill(codeField, code);
 
   console.log('uat-login: отправляю форму');
-  // Success is "the URL now sits under --success", not "the URL is no longer the
-  // login page": a failed submit that lands anywhere else would otherwise count
-  // as a login, and a state file with zero cookies would be written silently.
+  // The URL under --success is the fast path and nothing more: when the browser lands elsewhere (the
+  // farm ends on "/"), the outcome is decided by probeSuccess() below.
   await page.click(submitSelector);
   const landedUnderSuccess = await page
     .waitForURL(loggedIn, { timeout: Math.max(timeout, 30000) })
@@ -160,13 +211,50 @@ try {
   const state = await context.storageState();
   const cookies = state.cookies?.length ?? 0;
   const landed = new URL(page.url());
+  // Fast path — the browser landed on an authenticated page. Otherwise the probe decides: it is
+  // the stand, not the URL, that says whether the session is alive.
+  const probe = landedUnderSuccess
+    ? { ok: true, status: 'не понадобился' }
+    : cookies > 0
+      ? await probeSuccess(context)
+      : { ok: false, status: 'нет cookie' };
+  const confirmed = landedUnderSuccess || probe.ok;
 
-  if (!landedUnderSuccess || cookies === 0) {
+  if (!confirmed || cookies === 0) {
     const title = await page.title().catch(() => '');
-    console.error(
-      `uat-login: вход не прошёл — страница ${landed.pathname} («${title}»), ожидался путь ${success} вне /login, cookie ${cookies}`
-    );
-    console.error('uat-login: проверь значения в .env, срок действия кода, селекторы формы и доступность стенда');
+    if (cookies === 0) {
+      // Nothing to probe with: the form did not leave a session behind, so no request is made at
+      // all and saying otherwise would invent evidence.
+      console.error(
+        `uat-login: вход не прошёл — страница ${landed.pathname} («${title}»), cookie не записано; проверка запросом не выполнялась`
+      );
+      console.error('uat-login: проверь значения в .env, срок действия кода и селекторы формы');
+    } else if (probe.kind === 'unchecked') {
+      // The stand never answered the probe: this is not a verdict on the login, and calling it
+      // "вход не прошёл" would send the reader to the form instead of the route.
+      console.error(`uat-login: состояние не проверено — ${success}: ${probe.status}`);
+      console.error('uat-login: файл состояния не записан. Проверь доступ к стенду и UAT_LOGIN_PROXY_SERVER,');
+      console.error('uat-login: либо подтверди вход в браузере вручную — страница ' + landed.pathname);
+    } else if (probe.kind === 'forbidden') {
+      console.error(
+        `uat-login: вход есть, но доступа к ${success} нет — ${probe.status} (сессия живая: cookie ${cookies})`
+      );
+      console.error(`uat-login: проверь права пользователя на ${success} или укажи другой --success`);
+    } else if (probe.kind === 'broken') {
+      console.error(
+        `uat-login: ${success} ответил ${probe.status} — вход тут ни при чём, проверь путь --success и состояние стенда (cookie ${cookies})`
+      );
+    } else if (probe.kind === 'login-area') {
+      console.error(
+        `uat-login: --success ${success} указывает в область входа, проверка не выполнялась (cookie ${cookies})`
+      );
+      console.error('uat-login: укажи путь, доступный только авторизованной сессии');
+    } else {
+      console.error(
+        `uat-login: вход не прошёл — страница ${landed.pathname} («${title}»), запрос ${success} ведёт в область входа (${probe.status}), cookie ${cookies}`
+      );
+      console.error('uat-login: проверь значения в .env, срок действия кода и селекторы формы');
+    }
     process.exitCode = 1;
   } else {
     // Write-then-rename: a /reload in the middle of the write must not read half
@@ -181,6 +269,9 @@ try {
     chmodSync(tmp, 0o600);
     renameSync(tmp, stateFile);
 
+    if (!landedUnderSuccess) {
+      console.log(`uat-login: адрес после входа — ${landed.pathname}, вход подтверждён запросом ${success}`);
+    }
     console.log(`uat-login: готово — вход выполнен, ${cookies} cookie сохранено в ${stateFile}`);
     console.log('uat-login: перезапусти MCP-сервер (/reload в pi), чтобы он подхватил состояние входа');
   }

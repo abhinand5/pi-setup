@@ -54,6 +54,35 @@ outside `skills/` on purpose: a restore wipes `skills/` and a sync copies that
 tree into the repo checkout. The values travel through the environment, never
 argv — argv is visible in `ps`.
 
+How the login is judged: `--success` (default `/admin`) is a path only an
+authenticated session sees, but the address after the submit is **not** required to
+land there. On the farm a successful login ends on `/`, not on `/admin` (a guest is
+redirected from `/admin` to `/admin/login/index`), and judging by the URL alone printed
+«вход не прошёл — страница /, ожидался путь /admin» about a live session with three
+cookies (#16027 п.2). So when the browser does not land under `--success`, the script
+asks the app itself: a request to `--success` with the cookies just obtained must be
+answered outside the login area — a guest is redirected to a sign-in path containing
+`/login`, an authenticated session is not.
+
+The state file is written only after that check passes, and the failures are named
+differently on purpose, because «вход не прошёл» about a live session sends the reader
+to the form instead of the real cause: `guest` (login did not take — redirected into
+`/login`, or 401), `forbidden` (403 — the session is live, this user just has no access
+to `--success`), `broken` (404/5xx — wrong path or sick stand), `unchecked` (the probe
+never reached the stand — network or proxy, with `UAT_LOGIN_PROXY_SERVER` as the hint),
+and «cookie не записано» when the form left no session at all (then no probe is made).
+
+`--success /` is refused with exit 2: `startsWith('/')` is always true and the public
+root answers 200 to a guest, so a rejected login would be written as a success and
+overwrite a working session in `current.json`. A `--success` that points into the login
+area (`/admin/login/index` answers 200 to a guest too) is never confirmed by the probe.
+
+Assumption worth knowing: the probe accepts any 2xx/3xx answered outside `/login` as
+proof of a session. That holds where a guest is redirected to a path containing `/login`
+(msb-lk: `/admin` → `/admin/login/index`, cabinet → `/site/login`); a stand that sends a
+guest elsewhere, or an SPA route that answers 200 to anyone, would confirm a guest — pick
+`--success` accordingly.
+
 After that the MCP server picks the state up on its next start: the Xvfb wrapper
 exports `PLAYWRIGHT_MCP_STORAGE_STATE` when the file exists, and `--isolated`
 still keeps the profile in memory. So the server has to be (re)started once
