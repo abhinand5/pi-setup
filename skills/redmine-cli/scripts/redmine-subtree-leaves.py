@@ -19,6 +19,10 @@ checked over the whole subtree rather than one level.
 Строки выводятся готовой ссылкой `REDMINE_SERVER/issues/<id>`, а не голым номером: такую строку можно
 вставить в заметку или в чат целиком. Первая колонка — порядковый номер пункта, последняя строка —
 сколько пунктов напечатано.
+
+По умолчанию печатаются четыре колонки — `#`, `url`, `priority`, `subject`; `--wide` добавляет
+`status`, `updated`, `user`, `tracker`. Узкий набор — то, что читают в заметке; остальное нужно,
+когда разбирают «почему строка попала в выборку».
 """
 
 DEFAULT_SERVER = "https://redmine.msb-leasing.ru"
@@ -126,6 +130,11 @@ def main():
         metavar="YYYY-MM-DD",
         help="keep issues whose updated_on is on or after this date (last activity, not creation)",
     )
+    parser.add_argument(
+        "--wide",
+        action="store_true",
+        help="add status, updated, user and tracker columns (default: #, url, priority, subject)",
+    )
     args = parser.parse_args()
 
     users = {int(x) for x in args.users.split(",")} if args.users else None
@@ -154,13 +163,19 @@ def main():
 
     selected.sort(key=lambda node: (-PRIORITY_RANK.get(node["priority"], 0), node["id"]))
 
-    print("#\turl\tpriority\tstatus\tupdated\tuser\ttracker\tsubject")
+    if args.wide:
+        print("#\turl\tpriority\tstatus\tupdated\tuser\ttracker\tsubject")
+    else:
+        print("#\turl\tpriority\tsubject")
     for position, node in enumerate(selected, start=1):
-        print(
+        head = (
             f"{position}\t{issue_url(args.server, node['id'])}\t{node['priority']}\t"
-            f"{node['status']}\t{node['updated']}\t{node['assignee']}\t{node['tracker']}\t"
-            f"{node['subject']}"
         )
+        if args.wide:
+            head += (
+                f"{node['status']}\t{node['updated']}\t{node['assignee']}\t{node['tracker']}\t"
+            )
+        print(f"{head}{node['subject']}")
     print(
         f"напечатано: {len(selected)} {plural(len(selected), 'пункт', 'пункта', 'пунктов')}"
     )
