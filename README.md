@@ -675,26 +675,15 @@ script. The `browser-uat` skill carries the operating procedure: build a QA
 inventory first, act from `browser_snapshot` refs, verify with console/network
 evidence, and screenshot anything visual.
 
-### Logging in without putting credentials in the chat
+### Saved logins (owned by the project skill)
 
-`uat.sh login` reads the phone and the one-time code from the project's `.env`,
-drives the sign-in form in a headless browser, and saves the Playwright storage
-state the MCP server loads on its next start. Two things it gets right by default:
-
-- **Proxy** — taken from `browser.contextOptions.proxy` in
-  `~/.pi/agent/playwright-mcp.json` (or `UAT_PLAYWRIGHT_CONFIG`), the same file the
-  MCP wrapper reads. The login starts a browser of its own, so the two can end up
-  on different routes — that is what timed the sign-in page out in #15799 п.1.
-  `--proxy-server URL` overrides the server; `--no-proxy` passes
-  `--no-proxy-server`, which is the only way to pin the direct route, because
-  otherwise Chromium may take a proxy from the system settings.
-- **Host** — the saved state is domain-scoped, so a login made on `127.0.0.1` is
-  a guest in a browser that opens `localhost`. The loopback host is rewritten to
-  `localhost` (the port is kept) and the cookie domains are printed after the
-  login; `--keep-host` leaves the URL alone.
-
-`tests/browser-uat-login-proxy.sh` checks the resolved values on `--dry-run` and the options
-`chromium.launch()` actually receives, through a stub Playwright package — no browser, no network.
+Credentials never go into the chat: the login is done out of band by a project script that reads the
+phone and the one-time code from the project `.env` and writes a Playwright storage state. That
+procedure belongs to the project — in msb-lk, `.pi/skills/test-farm-uat/scripts/uat.sh login` — so this
+repo ships no second copy of it. What stays here is the read side: when
+`~/.pi/agent/uat-auth/current.json` exists, the Xvfb wrapper exports it as `PLAYWRIGHT_MCP_STORAGE_STATE`
+for the MCP server (`UAT_STORAGE_STATE` overrides the path), which is how an authenticated session
+survives the `--isolated` restart.
 
 Two sharp edges are worth repeating:
 

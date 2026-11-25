@@ -12,9 +12,9 @@ the machine-touching part: `tests/docker-e2e.sh`, and the list under
 [Manual tests](../README.md#manual-tests).
 
 `docker-e2e.sh` is the only test that leaves the machine: it clones this repo from its git
-remote inside a container. `browser-uat-login-proxy.sh` stubs Playwright and fails on
-`goto`, so it reaches no network at all. `browser-uat-login-success.sh` stubs it as well —
-that one checks what counts as a successful login (the session, or the URL), not the proxy.
+remote inside a container. The login procedure that used to be tested here moved to the project
+skill it belongs to (msb-lk: `.pi/skills/test-farm-uat/tests/`), so this repo no longer carries
+those two scripts.
 
 ## Testing a script that writes to `$HOME`
 

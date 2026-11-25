@@ -831,6 +831,32 @@ bin_link_root() {
   printf '%s\n' "${main_root:-$ROOT}"
 }
 
+# Настоящий redmine — CLI на Go, ~22 МБ, и до #16035 он лежал прямо в $BIN_DIR/redmine. Это место
+# теперь занимает обёртка bin/redmine, поэтому CLI один раз перекладывается в $BIN_DIR/redmine.real:
+# без переноса `rm -f` в цикле ниже удалил бы CLI. Повторный прогон ничего не двигает — $BIN_DIR/redmine
+# к тому времени уже симлинк на обёртку, а redmine.real на месте. Путь для обёртки задаёт REDMINE_REAL.
+preserve_real_redmine() {
+  local link_root="$1" dst="$BIN_DIR/redmine" real="$BIN_DIR/redmine.real" wrapper
+  # Из воркдерева симлинк ставится только когда обёртка есть в основном дереве (проверка ниже в
+  # цикле): иначе CLI переехал бы в redmine.real, а команды redmine на машине не осталось.
+  [[ -f "$link_root/bin/redmine" ]] || return 0
+  [[ -e "$dst" || -L "$dst" ]] || return 0
+  wrapper="$(readlink -f "$link_root/bin/redmine" 2>/dev/null || printf '%s\n' "$link_root/bin/redmine")"
+  if [[ -L "$dst" && "$(readlink -f "$dst" 2>/dev/null || true)" == "$wrapper" ]]; then
+    return 0
+  fi
+  if [[ -e "$real" || -L "$real" ]]; then
+    echo "Note: $real уже есть — прежний $dst не сохраняю, его заменит обёртка."
+    return 0
+  fi
+  run mv "$dst" "$real"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "would move the real redmine CLI: $dst -> $real"
+  else
+    echo "Moved the real redmine CLI: $dst -> $real"
+  fi
+}
+
 # pi-models-check probes every id in subagents.modelScope.allow so "the catalog
 # lists it" is never mistaken for "the provider serves it".
 install_bin_helpers() {
@@ -840,6 +866,7 @@ install_bin_helpers() {
     echo "Note: $ROOT — связанное воркдерево; $BIN_DIR/* будет указывать на основное дерево $link_root,"
     echo "      чтобы симлинки не умерли вместе с воркдеревом после мержа."
   fi
+  preserve_real_redmine "$link_root"
   for src in "$ROOT"/bin/*; do
     [[ -f "$src" ]] || continue
     name="$(basename "$src")"

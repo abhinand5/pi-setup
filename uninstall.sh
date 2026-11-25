@@ -221,9 +221,24 @@ remove_bin_helpers() {
   done
 }
 
+# install.sh переложил настоящий redmine в redmine.real, чтобы место заняла обёртка bin/redmine
+# (#16035 п.10). После снятия обёртки логично вернуть CLI на место: без этого он остался бы под
+# именем, которое больше никто не зовёт.
+restore_real_redmine() {
+  local real="$BIN_DIR/redmine.real" dst="$BIN_DIR/redmine"
+  [[ -e "$real" || -L "$real" ]] || return 0
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    echo "Leaving $real: $dst уже занят"
+    return 0
+  fi
+  run mv "$real" "$dst"
+  echo "Restored the real redmine CLI: $real -> $dst"
+}
+
 remove_launcher
 remove_sync_helper
 remove_bin_helpers
+restore_real_redmine
 remove_restored_tree_entries "$ROOT/extensions" "$PI_HOME/extensions"
 remove_restored_tree_entries "$ROOT/themes" "$PI_HOME/themes"
 remove_restored_tree_entries "$ROOT/skills" "$PI_HOME/skills"

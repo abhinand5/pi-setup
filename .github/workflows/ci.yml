@@ -72,7 +72,7 @@ jobs:
           git config --global user.name "pi-setup CI"
           git config --global user.email "pi-setup@example.invalid"
 
-      - name: Script tests (ru-spellcheck, prek guard, uat login)
+      - name: Script tests (ru-spellcheck, prek guard, redmine wrapper)
         run: |
           status=0
           for test in tests/*.sh; do

@@ -15,8 +15,8 @@
 #   UAT_ARTIFACTS=DIR     screenshots/snapshots/logs (default $TMPDIR/browser-uat)
 #   UAT_IDLE_TIMEOUT=MS   close an idle browser (default 900000 = 15 min)
 #   UAT_MCP_PKG=SPEC      server package (default @playwright/mcp@0.0.84)
-#   UAT_STORAGE_STATE=P   saved login from `uat.sh login` (default
-#                         $PI_HOME/uat-auth/current.json);
+#   UAT_STORAGE_STATE=P   saved login written by a project login command
+#                         (default $PI_HOME/uat-auth/current.json);
 #                         passed to the server as PLAYWRIGHT_MCP_STORAGE_STATE
 #   UAT_PLAYWRIGHT_CONFIG base config (default ~/.pi/agent/playwright-mcp.json)
 #
@@ -145,14 +145,15 @@ derive_config() {
   printf '%s\n' "$out"
 }
 
-# --- saved login (uat.sh login) ---------------------------------------------
+# --- saved login (written by the project's login command) -------------------
 # The server runs with --isolated (see mcp.json), so the profile lives in memory
 # and a saved storage state is the only way an authenticated session survives a
-# server restart. The file is written by `uat.sh login`; UAT_STORAGE_STATE points
-# the server at another profile.
+# server restart. This wrapper only reads it — the login procedure belongs to the
+# project skill (msb-lk: .pi/skills/test-farm-uat/scripts/uat.sh login), and
+# UAT_STORAGE_STATE points the server at another profile.
 if [[ -z "${PLAYWRIGHT_MCP_STORAGE_STATE:-}" ]]; then
-  # current.json is the profile written by the last `uat.sh login`; it lives
-  # outside skills/ so a restore does not delete it.
+  # current.json is the profile written by the last login; it lives outside
+  # skills/ so a restore does not delete it.
   STATE_FILE="${UAT_STORAGE_STATE:-$PI_HOME/uat-auth/current.json}"
   if [[ -f "$STATE_FILE" ]]; then
     export PLAYWRIGHT_MCP_STORAGE_STATE="$STATE_FILE"

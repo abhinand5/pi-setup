@@ -16,7 +16,7 @@
   отвечает на вопрос «как helper попадает в PATH» одной строкой. Именно `rg`, а не `grep -n`: последний
   сторож `call-guard` отклоняет как чтение файла через bash (#15909 п.4).
 - Прогоны: `node --test tests/*.test.mjs` (правила сторожей), `bash tests/ru-spellcheck-*.sh`
-  (словарь, deny-список, длинный ввод), `bash tests/browser-uat-login-proxy.sh` (uat login).
+  (словарь, deny-список, длинный ввод), `bash tests/redmine-limit-hint.sh` (обёртка redmine).
   `tests/docker-e2e.sh` — полный install в контейнере, минуты, вне CI намеренно.
 - Сторожа агента живут в `extensions/*-core.mjs` (правило) + `*.ts` (хук Pi); обход — переменной
   окружения `PI_*_ALLOW=1`. Подробности — шапка каждого файла.

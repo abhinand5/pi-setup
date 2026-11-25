@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# redmine — обёртка над настоящим CLI redmine (aarondpn/redmine-cli).
+#
+# Зачем: `redmine issues list` без `--limit` молча режет вывод на 100 строках и не печатает общий счёт.
+# В #16035 так «проверили 100 задач» из 8253: список выглядел полным, потому что обрезанный ответ ничем
+# не отличался от полного. У самого CLI флаг есть (`--limit 0` — всё), не хватало напоминания в момент
+# вызова. Обёртка его печатает и передаёт вызов настоящему CLI как есть.
+#
+# Настоящий redmine — CLI на Go, ~22 МБ. install.sh перекладывает уже установленный
+# ~/.local/bin/redmine в ~/.local/bin/redmine.real и ставит на его место симлинк на этот файл
+# (`preserve_real_redmine`); путь можно задать через REDMINE_REAL.
+#
+# `--help`, `issues create`, `issues update` и всё остальное проходят без изменений и без предупреждений:
+# справку обёртка не переписывает, её печатает сам CLI.
+
+set -uo pipefail
+
+PROG='redmine-обёртка'
+LIMIT_HINT='без --limit CLI режет вывод на 100 задачах и не печатает общий счёт — полный список: --limit 0'
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  printf '  %s\n' "$2" >&2
+  exit 2
+}
+
+# Абсолютный путь этого файла: сравнением с ним отсеивается сама обёртка, когда
+# `type -P -a redmine` первым отдаёт ~/.local/bin/redmine (симлинк на этот скрипт).
+self_path() {
+  local path="${BASH_SOURCE[0]}"
+  readlink -f "$path" 2>/dev/null && return 0
+  printf '%s\n' "$path"
+}
+
+resolved() {
+  readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Каталог, из которого обёртку позвали: там же лежит redmine.real, если установщик его переложил.
+invocation_dir() {
+  local dir
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || dir="${BASH_SOURCE[0]%/*}"
+  printf '%s\n' "$dir"
+}
+
+find_real_redmine() {
+  local self inv_dir candidate
+  self="$(self_path)"
+  inv_dir="$(invocation_dir)"
+
+  if [[ -n "${REDMINE_REAL:-}" ]]; then
+    [[ -x "$REDMINE_REAL" ]] || die "REDMINE_REAL=$REDMINE_REAL не исполняемый" 'укажите путь к настоящему redmine или снимите переменную'
+    printf '%s\n' "$REDMINE_REAL"
+    return 0
+  fi
+
+  for candidate in "$inv_dir/redmine.real" "${HOME:-}/.local/bin/redmine.real" /usr/local/bin/redmine /usr/bin/redmine; do
+    [[ -x "$candidate" ]] || continue
+    [[ "$(resolved "$candidate")" == "$self" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  while IFS= read -r candidate; do
+    [[ -x "$candidate" ]] || continue
+    [[ "$(resolved "$candidate")" == "$self" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(type -P -a redmine 2>/dev/null || true)
+
+  return 1
+}
+
+# `issues list` без --limit — единственный случай, о котором стоит говорить. Порядок слов в командной
+# строке CLI фиксирован (`redmine <resource> <action> [flags]`), поэтому хватает первых двух позиционных
+# аргументов (тех, что не начинаются с `-`); на `--help` и на прочие команды предупреждение не появляется.
+warn_missing_limit() {
+  local -a args=("$@")
+  local arg have_resource=0 resource='' action='' have_limit=0
+
+  for arg in "${args[@]}"; do
+    case "$arg" in
+      -h|--help) return 0 ;;
+      --limit|--limit=*) have_limit=1 ;;
+    esac
+  done
+  (( have_limit )) && return 0
+
+  for arg in "${args[@]}"; do
+    case "$arg" in
+      -h|--help) return 0 ;;
+      -*) continue ;;
+    esac
+    if (( ! have_resource )); then
+      resource="$arg"
+      have_resource=1
+    else
+      action="$arg"
+      break
+    fi
+  done
+
+  [[ "$resource" == "issues" ]] || return 0
+  case "$action" in
+    list|ls) ;;
+    *) return 0 ;;
+  esac
+
+  printf '%s: %s\n' "$PROG" "$LIMIT_HINT" >&2
+}
+
+warn_missing_limit "$@"
+
+real_redmine="$(find_real_redmine)" \
+  || die 'настоящий redmine не найден' 'поставьте CLI redmine, задайте REDMINE_REAL или переложите CLI в ~/.local/bin/redmine.real'
+
+exec "$real_redmine" "$@"

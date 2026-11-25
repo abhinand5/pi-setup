@@ -30,81 +30,24 @@ tool list without the user. `pi mcp list` shows the configured servers, and
 `/reload` (a new session works too) is the manual fallback when the gateway
 cannot connect.
 
-## Logging in (server-side)
+## Saved session
 
 The browser tools take field values only as arguments — that is, into the
-conversation. Test credentials must not go there, so the login is done out of
-band, by a script, and the agent only opens the already-authenticated session:
+conversation, so test credentials must not go there. The login itself is a
+**project** procedure, not this skill's: it reads the phone and the one-time code
+from the project `.env` and writes a Playwright storage state out of band. In
+msb-lk that is `.pi/skills/test-farm-uat/scripts/uat.sh login` (with
+`uat-login.mjs` next to it), and the project skill owns the form selectors and
+the `--success` path; two copies of that procedure drift, so this skill keeps none.
 
-```bash
-~/.pi/agent/skills/browser-uat/scripts/uat.sh login \
-  --url http://localhost/admin/login/sign-in \
-  --env ~/work/project/.env \
-  --send-selector .js_send_code \
-  --profile my-project
-```
-
-What it does: reads the phone and the one-time code from the project `.env`
-(variables `ADMIN_PHONE_NUMBER` / `ADMIN_PHONE_CODE` by default, override with
-`--phone-var` / `--code-var`), fills the sign-in form in a headless Chromium, and
-writes the browser state to `~/.pi/agent/uat-auth/<profile>.json` (mode 600) and
-points `~/.pi/agent/uat-auth/current.json` at it — that is the file the server
-loads, so any `--profile` works without extra environment. The directory lives
-outside `skills/` on purpose: a restore wipes `skills/` and a sync copies that
-tree into the repo checkout. The values travel through the environment, never
-argv — argv is visible in `ps`.
-
-How the login is judged: `--success` (default `/admin`) is a path only an
-authenticated session sees, but the address after the submit is **not** required to
-land there. On the farm a successful login ends on `/`, not on `/admin` (a guest is
-redirected from `/admin` to `/admin/login/index`), and judging by the URL alone printed
-«вход не прошёл — страница /, ожидался путь /admin» about a live session with three
-cookies (#16027 п.2). So when the browser does not land under `--success`, the script
-asks the app itself: a request to `--success` with the cookies just obtained must be
-answered outside the login area — a guest is redirected to a sign-in path containing
-`/login`, an authenticated session is not.
-
-The state file is written only after that check passes, and the failures are named
-differently on purpose, because «вход не прошёл» about a live session sends the reader
-to the form instead of the real cause: `guest` (login did not take — redirected into
-`/login`, or 401), `forbidden` (403 — the session is live, this user just has no access
-to `--success`), `broken` (404/5xx — wrong path or sick stand), `unchecked` (the probe
-never reached the stand — network or proxy, with `UAT_LOGIN_PROXY_SERVER` as the hint),
-and «cookie не записано» when the form left no session at all (then no probe is made).
-
-`--success /` is refused with exit 2: `startsWith('/')` is always true and the public
-root answers 200 to a guest, so a rejected login would be written as a success and
-overwrite a working session in `current.json`. A `--success` that points into the login
-area (`/admin/login/index` answers 200 to a guest too) is never confirmed by the probe.
-
-Assumption worth knowing: the probe accepts any 2xx/3xx answered outside `/login` as
-proof of a session. That holds where a guest is redirected to a path containing `/login`
-(msb-lk: `/admin` → `/admin/login/index`, cabinet → `/site/login`); a stand that sends a
-guest elsewhere, or an SPA route that answers 200 to anyone, would confirm a guest — pick
-`--success` accordingly.
-
-After that the MCP server picks the state up on its next start: the Xvfb wrapper
-exports `PLAYWRIGHT_MCP_STORAGE_STATE` when the file exists, and `--isolated`
-still keeps the profile in memory. So the server has to be (re)started once
-after the login — and the agent can do that itself, without asking the user:
-
-```
-mcp({ connect: "playwright" })
-```
-
-The MCP gateway starts the server again, it reads
-`~/.pi/agent/uat-auth/current.json` on start, and the next `browser_navigate`
-lands on an authenticated page. `/reload` in pi does the same thing by hand and
-remains the fallback for a session where the gateway is not available or the
-tool list itself is missing (see “Start here”); it needs the user, so it is not
-the default answer. `--profile` picks the file, `UAT_STORAGE_STATE` points the
-server at another one; `--dry-run` checks the paths without starting a browser.
-The login runs Playwright's own Chromium, not the system Chrome that
-`uat.sh doctor` looks for — if it is missing, the script says so and
-`npx playwright install chromium` fixes it.
-
-Project-specific details (form selectors, where the dev one-time code comes
-from) belong to the project skill — this section owns only the mechanism.
+What this skill does own is the read side. The Xvfb wrapper exports
+`PLAYWRIGHT_MCP_STORAGE_STATE` from `~/.pi/agent/uat-auth/current.json` when that
+file exists (`UAT_STORAGE_STATE` points it elsewhere), so a saved session
+survives the `--isolated` restart. After a login the server has to be started
+again once — `mcp({ connect: "playwright" })` does that without the user, and
+`/reload` is the manual fallback. The state directory sits outside `skills/` on
+purpose: a restore wipes `skills/`, and a sync would copy that tree into the
+repository checkout.
 
 ## Workflow
 
@@ -241,11 +184,12 @@ and report the duplication.
   output (#16076). Interface labels stay readable at 1280×800; take element
   screenshots when they do not.
 - **`--isolated` means no persisted profile, not "no login".** Every server
-  restart starts with a fresh in-memory profile, and the saved storage state from
-  `uat.sh login` is loaded into it — so the session survives a restart without
-  typing credentials into the chat. Without a saved state the browser starts
-  logged out; do not log in "as part of the flow" with `browser_type` (the values
-  would land in the conversation) — run `uat.sh login` first.
+  restart starts with a fresh in-memory profile, and the saved storage state is
+  loaded into it — so the session survives a restart without typing credentials
+  into the chat. Without a saved state the browser starts logged out; do not log
+  in "as part of the flow" with `browser_type` (the values would land in the
+  conversation) — run the project's login command first (msb-lk:
+  `.pi/skills/test-farm-uat/scripts/uat.sh login`).
 - **The browser self-closes after 15 minutes idle.** The next tool call relaunches
   it, which loses tabs and session state — re-navigate rather than assuming the
   page is still there.

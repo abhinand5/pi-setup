@@ -46,6 +46,8 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
    redmine issues list --parent <epic-id> --status '*' -o json | jq -r '.[] | "\(.id) \(.status.name) \(.subject)"'
    ```
 
+   **`issues list` cut the answer at 100 rows** and prints no total, so a truncated list is indistinguishable from a complete one: in #16035 «проверили 100 задач» were 100 rows of 8253, and the answer to «is this already filed» was read off a partial list (#16035 п.10). Pass `--limit 0` whenever the whole list matters — the `bin/redmine` wrapper prints the same reminder on stderr — and compare against the count the query prints.
+
    Read the **bodies** of open children, not just their subjects. A title rarely names the mechanism: «отклонение контрольной суммы у замороженной строки» did not read as «итоги не читают снимок», so #15660 was filed an hour after #15643 while the same work already stood as item 2 of #15656 (#15661 п.3). Grep each open child's description for the finding's anchors — class or field name, `file.php:NN`, a distinctive constant:
 
    ```bash
@@ -60,6 +62,8 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
    Mark each candidate the same way: `already closed in #NNNNN`, `already landed in <merge sha>`, `already filed as item N of #NNNNN`, or `new`.
 
 5. Present these candidates to the user, in order of severity.
+
+   For each candidate name the **repository the edit lands in** and the **channel it is filed through** — a child issue of the epic in Redmine, a GitHub issue, a PR — and check the channel is open before promising it: whether the repository has Issues enabled, whether the tracker or epic is reachable and still accepts children. A channel that is turned off is otherwise discovered at filing time, after the user approved a plan that depended on it. When the ownership is arguable — a shared `~/.pi/agent` skill against the project skill that owns the procedure — ask the user one question before creating anything, rather than filing in both places.
 
 6. After the presentation, offer to file the findings as a child issue of the current epic (the epic the work belongs to, not the task): one issue for the whole list, numbered findings inside, with a note that items may overlap already-merged slices. Every new issue carries a line «сверено с #NNNNN, пересечение такое-то» (or «не пересекается») from step 4 — an issue filed without it is the failure this step exists to prevent. Do not create it without the user's word; when they say yes, pass the description from a file — `redmine-file issues create --project … --parent <epic> --description-file /tmp/retro.txt` — so the text never rides in the conversation.
 
