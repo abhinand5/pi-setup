@@ -158,10 +158,26 @@ from the repo copy … leaving it` и повторяется в конце пр�
 
   ```bash
   python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
-  gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+  gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json --jq '.html_url'
   ```
 
+  `--jq '.html_url'` — не украшение: без него вызов печатает весь объект PR (19 989 байт одной строкой в
+  журнале #16027 — 5 % вывода инструментов сессии на подтверждение «ok»). Ссылка одной строкой — то, что
+  всё равно нужно в чате (#16046 п.3).
+
   `--add-label` / `--remove-label` в `gh pr edit` работают — падает именно правка тела.
+
+  Так же и создание PR: вывод в файл, в чат ссылка:
+
+  ```bash
+  rm -f /tmp/pr-create.txt
+  gh pr create --base <base> --title '<title>' --body-file body.md > /tmp/pr-create.txt 2>&1
+  tail -1 /tmp/pr-create.txt   # URL; остальное — ход выполнения, в контексте он не нужен
+  ```
+
+  Номер PR в имени файла не ставится: номер и есть то, что вернёт создание, поэтому
+  `/tmp/pr-create-<n>.txt` может остаться от прошлого прогона, а `tail -1` по старому файлу читается
+  как успех. `rm -f` перед вызовом делает само существование файла доказательством, что вызов был.
 - **Ожидание CI — `gh pr checks <n> --watch`.** Одна команда вместо ручного цикла
   `for i in $(seq 1 40); do … sleep 10; done`: цикл стоит вызова на каждую итерацию, теряет код
   возврата в конвейере и не говорит, какая проверка упала. `--watch --fail-fast` выходит на первом

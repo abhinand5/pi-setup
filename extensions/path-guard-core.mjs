@@ -24,9 +24,20 @@
 // 5. Запись в основное дерево, когда сессия работает в `.claude/worktrees/<имя>` (#15742 п.5):
 //    правка уезжает не в дерево задачи, а prek-хук `root-files-clean` ловит такое только на
 //    коммите — которого в основном дереве не будет.
+// 7. Запись в общий чекаут `~/p/pi-setup/` (#16046 п.4): политика репозитория — правка идёт в
+//    `~/p/pi-setup-wt/<задача>` и PR, а общий чекаут держит `main` для `install.sh` и `sync.sh`.
+//    Правило 5 эту сессию не ловило: она работала из основного дерева msb-lk, а не из воркдерева
+//    pi-setup, и `read`/`edit` ушли в `~/p/pi-setup/skills/browser-uat/uct-login.mjs`; ошибку
+//    нашёл тест, восстановление — `git diff`, `git checkout --`, `git apply` в воркдерево.
 //
 // Легальная запись мимо этих мест — через `bash` (там шелл уместен) или явной просьбой к человеку.
-// Осознанные обходы — переменные окружения PI_PATH_GUARD_ALLOW_TWIN и PI_PATH_GUARD_ALLOW_MAIN_TREE.
+// Осознанные обходы — переменные окружения PI_PATH_GUARD_ALLOW_TWIN, PI_PATH_GUARD_ALLOW_MAIN_TREE и
+// PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN.
+//
+// Границы правила 7 названы честно: путь сравнивается с литеральным `<home>/p/pi-setup` (вывести его
+// из `cwd` нельзя), и симлинк-алиас корня правило не видит — `realpath` не делается, как и в правиле 5.
+// Машина с другим расположением чекаута получает правило, которое молчит; тогда его корень задаётся
+// при вызове (`piSetupRoot`), как это делают тесты.
 //
 // Границы правил 4 и 5 названы честно:
 // - проверка 4 сознательно узкая — только смена алфавита (кириллица ↔ латиница). Регистр (`P` рядом с
@@ -161,6 +172,19 @@ function mainTreeViolation(absolutePath, cwd) {
 }
 
 /**
+ * Общий чекаут pi-setup (#16046 п.4): правка репозитория идёт в `~/p/pi-setup-wt/<задача>`, а общий
+ * чекаут держит `main` для `install.sh` и `sync.sh`. Правило 5 такой путь не ловит, когда сессия
+ * работает не в воркдереве pi-setup, а в основном дереве другого репозитория.
+ */
+function piSetupMainViolation(absolutePath, env) {
+	const root = env.piSetupRoot ?? join(homedir(), "p", "pi-setup");
+	// Воркдеревья лежат рядом: `<корень>-wt/<задача>`, отдельным каталогом — `isUnder` по корню их
+	// не захватывает, отдельная проверка не нужна. Раскладка названа в тексте отказа.
+	if (!isUnder(absolutePath, root)) return null;
+	return { root, worktreeRoot: `${root}-wt` };
+}
+
+/**
  * Списки запрещённых слов ru-spellcheck: и машинный (`~/.config/ru-spellcheck/deny.txt`), и проектный
  * (`.ru-spellcheck-deny`). Правка запрещена всегда — файл описывает политику языка, а не код.
  */
@@ -194,7 +218,10 @@ function isUnder(path, root) {
  *
  * @param {string} path аргумент `path` как его прислала модель
  * @param {string} cwd текущий рабочий каталог сессии
- * @param {{ home?: string, tmp?: string }} [env] подмена корней для тестов
+ * @param {{ roots?: string[], piSetupRoot?: string, allowTwin?: boolean, allowMainTree?: boolean,
+ *           allowDenyList?: boolean, allowPiSetupMain?: boolean, exists?: Function,
+ *           readdir?: Function }} [env] подмена корней и осознанные обходы (так правило проверяется
+ *           тестом без записи файлов)
  * @returns {{ allowed: boolean, reason?: string, absolutePath?: string }}
  */
 export function checkPath(path, cwd, env = {}) {
@@ -247,6 +274,14 @@ export function checkPath(path, cwd, env = {}) {
 	if (!env.allowMainTree) {
 		const mainTree = mainTreeViolation(absolutePath, cwd);
 		if (mainTree) {
+			// У общего чекаута pi-setup два правила сразу: сессия из воркдерева pi-setup, метящая в
+			// основной чекаут, получает отказ и от правила 5, и от правила 7. Назвать один обход
+			// значило бы послать агента за вторым отказом; проверено ревью #16046.
+			// Подсказка про второй обход сверяется с уже выставленным флагом: фразу «нужны оба» при
+			// включённом ALLOW_PI_SETUP_MAIN читали бы как «обход не работает» (ревью #16046 раунд 2).
+			const alsoRule7 = !env.allowPiSetupMain && piSetupMainViolation(absolutePath, env)
+				? " У общего чекаута pi-setup свой обход — PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1: нужны оба."
+				: "";
 			return {
 				allowed: false,
 				absolutePath,
@@ -254,7 +289,7 @@ export function checkPath(path, cwd, env = {}) {
 					`путь ${absolutePath} — в основном дереве ${mainTree.repoRoot}, а сессия работает в воркдереве ${mainTree.worktree}. ` +
 					"Правка уедет не в дерево задачи, а в основной чекаут, где её никто не закоммитит " +
 					"(хук root-files-clean ловит такое только на коммите). Возьмите путь дерева задачи. " +
-					"Осознанный обход — PI_PATH_GUARD_ALLOW_MAIN_TREE=1",
+					`Осознанный обход — PI_PATH_GUARD_ALLOW_MAIN_TREE=1.${alsoRule7}`,
 			};
 		}
 	}
@@ -285,6 +320,28 @@ export function checkPath(path, cwd, env = {}) {
 					`рядом уже есть ${join(twin.dir, twin.twin)} — имя «${twin.name}» отличается от него только гомоглифами ` +
 					"(кириллица вместо латиницы или наоборот). Похоже на опечатку в пути: инструмент создал бы " +
 					"рядом второй каталог. Проверьте путь; осознанный обход — PI_PATH_GUARD_ALLOW_TWIN=1",
+			};
+		}
+	}
+
+	// Правило 7 — последним: оно самое широкое из всех (целый каталог), и более точный отказ —
+	// deny-список ru-spellcheck внутри того же чекаута — должен выигрывать у отката «возьмите
+	// воркдерево», иначе из сообщения пропадает настоящая причина. Правило 5 стоит выше и этим не
+	// ограничено: его отказ выигрывает и у deny-списка, и у двойника.
+	if (!env.allowPiSetupMain) {
+		const piSetup = piSetupMainViolation(absolutePath, env);
+		if (piSetup) {
+			// Подсказки про правило 5 здесь нет и быть не может: правило 5 исполняется раньше и
+			// пропускает сюда только при включённом ALLOW_MAIN_TREE — значит второй обход уже
+			// выставлен (ревью #16046 раунд 2).
+			return {
+				allowed: false,
+				absolutePath,
+				reason:
+					`путь ${absolutePath} — в общем чекауте ${piSetup.root}, а он держит main для install.sh и sync.sh. ` +
+					`Правка pi-setup идёт в воркдереве ${piSetup.worktreeRoot}/<задача> и PR: коммит в общий чекаут ` +
+					"уезжает в main мимо ревью. Возьмите путь воркдерева; осознанный обход — " +
+					"PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1",
 			};
 		}
 	}

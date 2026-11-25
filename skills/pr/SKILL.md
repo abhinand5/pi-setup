@@ -36,10 +36,26 @@ new Projects experience`, exits 1, and leaves the body untouched (#15834 п.4). 
 
 ```bash
 python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
-gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json --jq '.html_url'
 ```
 
+`--jq '.html_url'` is not cosmetic: without it the call prints the whole PR object (19 989 bytes in one
+line of the #16027 log — 5 % of that session's tool output, spent on confirming «ok»). The link on one line is what
+the chat needs anyway (#16046 п.3).
+
 `gh pr edit --add-label` / `--remove-label` work — it is the body edit that breaks.
+
+The same for creation — output into a file, the link into the chat:
+
+```bash
+rm -f /tmp/pr-create.txt
+gh pr create --base <base> --title '<title>' --body-file body.md > /tmp/pr-create.txt 2>&1
+tail -1 /tmp/pr-create.txt   # URL; the rest of the output is progress you do not need in context
+```
+
+The file name carries no PR number on purpose: the number is what creation returns, so a name like
+`/tmp/pr-create-<n>.txt` can hold a previous run — `tail -1` on a stale file reads as success. `rm -f`
+before the call makes the file's very existence the proof that the call ran.
 
 Use this template for writing the PR body:
 
