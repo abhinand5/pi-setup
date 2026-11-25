@@ -329,13 +329,13 @@ redmine issues list --status "*" --sort id:desc --limit 1 -o json | jq -r '.[0].
 
 Prefer the guard in `scripts/create-issue.sh`: it refuses when an issue with the exact subject already exists, POSTs through `redmine api` (which exits non-zero on 4xx/5xx, unlike curl), tolerates a nested or missing id, and on an ambiguous response looks the issue up and prints its id instead of creating a second one. Exit codes: 0 created or recovered, 2 already exists, 3 ambiguous, 4 genuinely failed.
 
-**Путь к скрипту зависит от ветки.** `.pi/skills/` есть на эпик-ветке, но не на `master`. Если основное дерево на `master` и `.pi/skills/redmine-cli/scripts/create-issue.sh` не найден — не ищи его по worktree: используй `redmine api /issues.json --input /tmp/payload.json` (тот же payload, exits non-zero на 4xx/5xx) или скрипт из worktree эпика. То же для `scripts/check-issue-html.sh` (проверка рендера после записи): нет скрипта — тот же `curl -sS -o /dev/null -w '%{http_code}'` с заголовком `X-Redmine-API-Key`.
+**Путь к скрипту зависит от ветки.** `.pi/skills/` есть на эпик-ветке, но не на `master`. Если основное дерево на `master` и файла `.pi/skills/redmine-cli/scripts/create-issue.sh` нет — не ищи его по worktree: используй `redmine api /issues.json --input /tmp/payload.json` (тот же payload, exits non-zero на 4xx/5xx) или скрипт из worktree эпика. То же для `scripts/check-issue-html.sh` (проверка рендера после записи): нет скрипта — тот же `curl -sS -o /dev/null -w '%{http_code}'` с заголовком `X-Redmine-API-Key`.
 
 ```bash
 jq -n --rawfile desc /tmp/desc.textile \
   '{issue:{project_id:5,tracker_id:1,subject:"…",description:$desc,tag_list:["Калькулятор-API"]}}' \
   > /tmp/payload.json
-.pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json   # prints the id
+bash .pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json   # prints the id
 ```
 
 If you must shell out to curl, always pass `-f` (`--fail-with-body`) so HTTP errors are loud, and print `REDMINE_SERVER` before the call so a stub/local server mix-up is visible.
@@ -370,7 +370,7 @@ jq -n --rawfile desc /tmp/desc.textile '{"issue":{
   "project_id":5,"tracker_id":2,"subject":"…","description":$desc,
   "parent_issue_id":11301,"assigned_to_id":127,"priority_id":3,
   "tag_list":["Калькулятор-API"]}}' > /tmp/payload.json
-.pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json
+bash .pi/skills/redmine-cli/scripts/create-issue.sh /tmp/payload.json
 ```
 
 `redmine api /issues.json -X POST --input /tmp/payload.json` is the raw equivalent: same body, and it exits non-zero on HTTP errors. Do not hand-roll `curl -sS` here; without `-f` it reports success on a 500.
