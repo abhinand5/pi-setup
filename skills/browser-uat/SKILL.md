@@ -233,7 +233,13 @@ and report the duplication.
   directory (`$TMPDIR/browser-uat`, absolute paths in the tool result). An
   explicit filename resolves against the session cwd and litters the repo.
 - **The display is 1920×1080**, so full-page screenshots are wide. Call
-  `browser_resize` (e.g. 1280×800) when iterating, or take element screenshots.
+  `browser_resize(1280, 800)` **before a series of screenshots**, not only when
+  iterating: a screenshot is returned as an attachment in context, so frame size
+  is the price of the session, not cosmetics. Measured in #16048: screenshots at
+  the default viewport weigh 246–335 KB against ~120 KB at 1280×800 with the same
+  information, and 17 screenshot calls produced 1.9 MB of the session's 2.3 MB
+  output (#16076). Interface labels stay readable at 1280×800; take element
+  screenshots when they do not.
 - **`--isolated` means no persisted profile, not "no login".** Every server
   restart starts with a fresh in-memory profile, and the saved storage state from
   `uat.sh login` is loaded into it — so the session survives a restart without
