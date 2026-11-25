@@ -24,9 +24,15 @@
 // 5. Запись в основное дерево, когда сессия работает в `.claude/worktrees/<имя>` (#15742 п.5):
 //    правка уезжает не в дерево задачи, а prek-хук `root-files-clean` ловит такое только на
 //    коммите — которого в основном дереве не будет.
+// 7. Запись в общий чекаут `~/p/pi-setup/` (#16046 п.4): политика репозитория — правка идёт в
+//    `~/p/pi-setup-wt/<задача>` и PR, а общий чекаут держит `main` для `install.sh` и `sync.sh`.
+//    Правило 5 эту сессию не ловило: она работала из основного дерева msb-lk, а не из воркдерева
+//    pi-setup, и `read`/`edit` ушли в `~/p/pi-setup/skills/browser-uat/uct-login.mjs`; ошибку
+//    нашёл тест, восстановление — `git diff`, `git checkout --`, `git apply` в воркдерево.
 //
 // Легальная запись мимо этих мест — через `bash` (там шелл уместен) или явной просьбой к человеку.
-// Осознанные обходы — переменные окружения PI_PATH_GUARD_ALLOW_TWIN и PI_PATH_GUARD_ALLOW_MAIN_TREE.
+// Осознанные обходы — переменные окружения PI_PATH_GUARD_ALLOW_TWIN, PI_PATH_GUARD_ALLOW_MAIN_TREE и
+// PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN.
 //
 // Границы правил 4 и 5 названы честно:
 // - проверка 4 сознательно узкая — только смена алфавита (кириллица ↔ латиница). Регистр (`P` рядом с
@@ -161,6 +167,21 @@ function mainTreeViolation(absolutePath, cwd) {
 }
 
 /**
+ * Общий чекаут pi-setup (#16046 п.4): правка репозитория идёт в `~/p/pi-setup-wt/<задача>`, а общий
+ * чекаут держит `main` для `install.sh` и `sync.sh`. Правило 5 такой путь не ловит, когда сессия
+ * работает не в воркдереве pi-setup, а в основном дереве другого репозитория.
+ */
+function piSetupMainViolation(absolutePath, env) {
+	const root = env.piSetupRoot ?? join(homedir(), "p", "pi-setup");
+	if (!isUnder(absolutePath, root)) return null;
+	// Воркдеревья лежат рядом: `<корень>-wt/<задача>`. Префикс `-wt` отдельным каталогом,
+	// поэтому `isUnder` по корню их уже не захватывает — проверка оставлена ради читаемости.
+	const worktreeRoot = `${root}-wt`;
+	if (isUnder(absolutePath, worktreeRoot)) return null;
+	return { root, worktreeRoot };
+}
+
+/**
  * Списки запрещённых слов ru-spellcheck: и машинный (`~/.config/ru-spellcheck/deny.txt`), и проектный
  * (`.ru-spellcheck-deny`). Правка запрещена всегда — файл описывает политику языка, а не код.
  */
@@ -285,6 +306,24 @@ export function checkPath(path, cwd, env = {}) {
 					`рядом уже есть ${join(twin.dir, twin.twin)} — имя «${twin.name}» отличается от него только гомоглифами ` +
 					"(кириллица вместо латиницы или наоборот). Похоже на опечатку в пути: инструмент создал бы " +
 					"рядом второй каталог. Проверьте путь; осознанный обход — PI_PATH_GUARD_ALLOW_TWIN=1",
+			};
+		}
+	}
+
+	// Правило 7 — последним: оно самое широкое из всех (целый каталог), и более точные отказы —
+	// deny-список ru-spellcheck и каталог-двойник внутри того же чекаута — должны выигрывать у
+	// отката «возьмите воркдерево», иначе из сообщения пропадает настоящая причина.
+	if (!env.allowPiSetupMain) {
+		const piSetup = piSetupMainViolation(absolutePath, env);
+		if (piSetup) {
+			return {
+				allowed: false,
+				absolutePath,
+				reason:
+					`путь ${absolutePath} — в общем чекауте ${piSetup.root}, а он держит main для install.sh и sync.sh. ` +
+					`Правка pi-setup идёт в воркдереве ${piSetup.worktreeRoot}/<задача> и PR: коммит в общий чекаут ` +
+					"уезжает в main мимо ревью. Возьмите путь воркдерева; осознанный обход — " +
+					"PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1",
 			};
 		}
 	}

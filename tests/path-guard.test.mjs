@@ -17,8 +17,11 @@ import { checkPath, toToolCallResult } from "../extensions/path-guard-core.mjs";
 const CWD = "/home/denis/work/msl/msb-lk";
 const ROOTS = ["/home/denis/work/msl/msb-lk", "/home/denis", "/tmp"];
 
+// Корни те же, что у живой сессии. Обход правила 7 включён в помощнике: кейсы ниже проверяют другие
+// правила, а часть их путей лежит в `~/p/pi-setup` (списки ru-spellcheck). Само правило 7 проверяется
+// отдельно и вызывает `checkPath` без обхода.
 function check(path, cwd = CWD) {
-	return checkPath(path, cwd, { roots: ROOTS });
+	return checkPath(path, cwd, { roots: ROOTS, allowPiSetupMain: true });
 }
 
 test("путь с `2>/dev/null` блокируется — живой замер #15723 п.5", () => {
@@ -234,8 +237,48 @@ test("осознанный обход запрета deny-списка прох�
 	const verdict = checkPath("/home/denis/p/pi-setup/config/ru-spellcheck/deny.txt", CWD, {
 		roots: ROOTS,
 		allowDenyList: true,
+		// Кейс про обход deny-списка, а не про правило 7: путь лежит в общем чекауте pi-setup.
+		allowPiSetupMain: true,
 	});
 	assert.equal(verdict.allowed, true);
+});
+
+// #16046 п.4: сессия работала из основного дерева msb-lk, и `edit` ушёл в общий чекаут pi-setup
+// (`~/p/pi-setup/skills/browser-uat/uct-login.mjs`) — правило 5 такую сессию не ловило, потому что она
+// не в воркдереве pi-setup. Политика «pi-setup правится в воркдереве» держалась только текстом.
+const PI_SETUP_ROOT = "/home/denis/p/pi-setup";
+
+function checkPiSetup(path, extra = {}) {
+	return checkPath(path, CWD, { roots: ROOTS, piSetupRoot: PI_SETUP_ROOT, ...extra });
+}
+
+test("правка в общем чекауте pi-setup блокируется и называет воркдерево — #16046 п.4", () => {
+	for (const path of [
+		"/home/denis/p/pi-setup/skills/browser-uat/uct-login.mjs",
+		"/home/denis/p/pi-setup/config/AGENTS.md",
+		"/home/denis/p/pi-setup/AGENTS.md",
+	]) {
+		const verdict = checkPiSetup(path);
+		assert.equal(verdict.allowed, false, `правка разрешена: ${path}`);
+		assert.match(verdict.reason, /общем чекауте/, `причина не та: ${verdict.reason}`);
+		assert.match(verdict.reason, /pi-setup-wt\/<задача>/, `воркдерево не названо: ${verdict.reason}`);
+		assert.match(verdict.reason, /PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1/);
+	}
+});
+
+test("правка в воркдереве pi-setup проходит — #16046 п.4", () => {
+	assert.equal(checkPiSetup("/home/denis/p/pi-setup-wt/16046-retro/skills/pr/SKILL.md").allowed, true);
+});
+
+test("осознанный обход запрета общего чекаута pi-setup проходит", () => {
+	const verdict = checkPiSetup("/home/denis/p/pi-setup/skills/pr/SKILL.md", { allowPiSetupMain: true });
+	assert.equal(verdict.allowed, true);
+});
+
+test("правило 7 не задевает чужие каталоги и соседей pi-setup", () => {
+	// Соседний каталог с тем же префиксом — не общий чекаут: сравнение идёт по границе каталога.
+	assert.equal(checkPiSetup("/home/denis/p/pi-setup-other/skills/pr/SKILL.md").allowed, true);
+	assert.equal(checkPiSetup("/home/denis/p/msl/msb-lk/AGENTS.md").allowed, true);
 });
 
 test("ответ Pi для заблокированного вызова называет причину", () => {

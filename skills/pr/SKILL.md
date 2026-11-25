@@ -36,7 +36,18 @@ new Projects experience`, exits 1, and leaves the body untouched (#15834 п.4). 
 
 ```bash
 python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
-gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json --jq '.html_url'
+```
+
+`--jq '.html_url'` is not cosmetic: without it the call prints the whole PR object (19 989 bytes in one
+line of the #16027 log — 5 % of that session's tool output, spent on confirming «ok»). The link on one line is what
+the chat needs anyway (#16046 п.3).
+
+The same for creation — output into a file, the link into the chat:
+
+```bash
+gh pr create --base <base> --title '<title>' --body-file body.md > /tmp/pr-create-<n>.txt 2>&1
+tail -1 /tmp/pr-create-<n>.txt   # URL; the rest of the output is progress you do not need in context
 ```
 
 `gh pr edit --add-label` / `--remove-label` work — it is the body edit that breaks.

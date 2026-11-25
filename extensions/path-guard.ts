@@ -17,7 +17,8 @@
 // Отключить на сессию: `pi --no-extensions` или убрать файл из `~/.pi/agent/extensions`.
 // Осознанные обходы отдельных правил: PI_PATH_GUARD_ALLOW_TWIN=1 (каталог-двойник по гомоглифу),
 // PI_PATH_GUARD_ALLOW_MAIN_TREE=1 (запись в основное дерево при активном воркдереве),
-// PI_PATH_GUARD_ALLOW_DENY_LIST=1 (список запрещённых слов ru-spellcheck — владение человека).
+// PI_PATH_GUARD_ALLOW_DENY_LIST=1 (список запрещённых слов ru-spellcheck — владение человека),
+// PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1 (запись в общий чекаут pi-setup — правка идёт в воркдереве).
 
 import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { checkPath, toToolCallResult } from "./path-guard-core.mjs";
@@ -29,6 +30,7 @@ function verdict(path: string, cwd: string) {
 			allowTwin: process.env.PI_PATH_GUARD_ALLOW_TWIN === "1",
 			allowMainTree: process.env.PI_PATH_GUARD_ALLOW_MAIN_TREE === "1",
 			allowDenyList: process.env.PI_PATH_GUARD_ALLOW_DENY_LIST === "1",
+			allowPiSetupMain: process.env.PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN === "1",
 		}),
 	);
 }

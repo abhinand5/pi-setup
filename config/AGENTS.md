@@ -158,7 +158,16 @@ from the repo copy … leaving it` и повторяется в конце пр�
 
   ```bash
   python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' body.md > /tmp/body.json
-  gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json
+  gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input /tmp/body.json --jq '.html_url'
+  ```
+
+  `--jq '.html_url'` — не украшение: без него вызов печатает весь объект PR (19 989 байт одной строкой в
+  журнале #16027 — 5 % вывода инструментов сессии на подтверждение «ok»). Ссылка одной строкой — то, что
+  всё равно нужно в чате (#16046 п.3). Так же и создание PR: вывод в файл, в чат ссылка:
+
+  ```bash
+  gh pr create --base <base> --title '<title>' --body-file body.md > /tmp/pr-create-<n>.txt 2>&1
+  tail -1 /tmp/pr-create-<n>.txt   # URL; остальное — ход выполнения, в контексте он не нужен
   ```
 
   `--add-label` / `--remove-label` в `gh pr edit` работают — падает именно правка тела.
