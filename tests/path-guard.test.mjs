@@ -202,6 +202,67 @@ test("вырожденный корень `/.claude/worktrees/x` не блоки
 	assert.equal(verdict.allowed, true);
 });
 
+// Правило 8 (#16095): сессия держит метку воркдерева, а правит основное дерево. Правило 5 такого не
+// видит — оно смотрит на `cwd`, а сессия msb-lk стоит в основном дереве и целится абсолютными путями.
+const CLAIM_ROOT = "/home/denis/work/msl/msb-lk";
+const CLAIM_SESSION = "01a21497-16df-76eb-8c41-3ae9ce7a3723";
+
+function claimEnv(overrides = {}) {
+	const files = {
+		[join(CLAIM_ROOT, ".claude", "worktrees", "16095-shadow-gate3-margin", ".session")]:
+			`pid=1275075\nsession=${CLAIM_SESSION}\nbranch=fix/16095-shadow-gate3-margin\n`,
+	};
+	return {
+		roots: ROOTS,
+		sessionId: CLAIM_SESSION,
+		exists: (path) => path in files || path === join(CLAIM_ROOT, ".claude", "worktrees"),
+		readdir: (path) =>
+			path === join(CLAIM_ROOT, ".claude", "worktrees") ? ["16095-shadow-gate3-margin"] : [],
+		readFile: (path) => files[path],
+		...overrides,
+	};
+}
+
+test("правка основного дерева своей же сессией с меткой воркдерева блокируется — #16095", () => {
+	const verdict = checkPath(
+		`${CLAIM_ROOT}/modules/leasing_calculator/infrastructure/CalculatorAttributesNormalizer.php`,
+		CLAIM_ROOT,
+		claimEnv(),
+	);
+	assert.equal(verdict.allowed, false);
+	assert.match(verdict.reason, /держит воркдерево/);
+	assert.match(verdict.reason, /PI_PATH_GUARD_ALLOW_MAIN_TREE=1/);
+});
+
+test("свой воркдерево при метке пропускается", () => {
+	const worktree = join(CLAIM_ROOT, ".claude", "worktrees", "16095-shadow-gate3-margin");
+	const verdict = checkPath(`${worktree}/modules/Calculator.php`, worktree, claimEnv());
+	assert.equal(verdict.allowed, true);
+});
+
+test("метка чужой сессии основной чекаут не запирает", () => {
+	const verdict = checkPath(
+		`${CLAIM_ROOT}/tmp/probe.txt`,
+		CLAIM_ROOT,
+		claimEnv({ sessionId: "другая-сессия" }),
+	);
+	assert.equal(verdict.allowed, true);
+});
+
+test("без id сессии правило 8 молчит: метку может не писать никто", () => {
+	const verdict = checkPath(`${CLAIM_ROOT}/tmp/probe.txt`, CLAIM_ROOT, claimEnv({ sessionId: "" }));
+	assert.equal(verdict.allowed, true);
+});
+
+test("осознанный обход снимает и правило 8", () => {
+	const verdict = checkPath(
+		`${CLAIM_ROOT}/tmp/probe.txt`,
+		CLAIM_ROOT,
+		claimEnv({ allowMainTree: true }),
+	);
+	assert.equal(verdict.allowed, true);
+});
+
 test("осознанный обход записи в основное дерево проходит", () => {
 	const worktree = "/home/denis/work/msl/msb-lk/.claude/worktrees/15820-tooling";
 	const verdict = checkPath("/home/denis/work/msl/msb-lk/tmp/probe.txt", worktree, { roots: ROOTS, allowMainTree: true });

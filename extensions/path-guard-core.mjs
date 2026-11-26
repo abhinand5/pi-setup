@@ -29,6 +29,13 @@
 //    Правило 5 эту сессию не ловило: она работала из основного дерева msb-lk, а не из воркдерева
 //    pi-setup, и `read`/`edit` ушли в `~/p/pi-setup/skills/browser-uat/uct-login.mjs`; ошибку
 //    нашёл тест, восстановление — `git diff`, `git checkout --`, `git apply` в воркдерево.
+// 8. Запись в основное дерево, когда сессия сама держит метку воркдерева (`#16095`): правило 5
+//    смотрит на `cwd`, поэтому молчит ровно в том режиме, в котором работают сессии msb-lk — дерево
+//    стоит на базовой ветке, а агент целится абсолютными путями и через `docker exec -w`. Метку
+//    `.claude/worktrees/<имя>/.session` пишет `switch-worktree-www.sh`, в ней есть `session=<id>`, и
+//    совпадение с `PI_SESSION_ID` говорит, что воркдерево занято этой же сессией. Тогда запись в
+//    корень репозитория мимо её воркдерева — блок; обход тот же, PI_PATH_GUARD_ALLOW_MAIN_TREE=1.
+//    Без `PI_SESSION_ID` (не сессия pi, чужой контур) правило молчит: метку может не писать никто.
 //
 // Легальная запись мимо этих мест — через `bash` (там шелл уместен) или явной просьбой к человеку.
 // Осознанные обходы — переменные окружения PI_PATH_GUARD_ALLOW_TWIN, PI_PATH_GUARD_ALLOW_MAIN_TREE и
@@ -47,7 +54,7 @@
 //   `<repo>-wt/<задача>` (pi-setup). Любая другая раскладка воркдеревьев ею не покрыта. Запись в `vendor`
 //   и `.env` воркдерева она не блокирует: это симлинки на основное дерево по замыслу.
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
@@ -172,6 +179,77 @@ function mainTreeViolation(absolutePath, cwd) {
 }
 
 /**
+ * Основное дерево, в котором сессия держит метку воркдерева (#16095).
+ *
+ * Правило 5 смотрит на `cwd` и поэтому молчит в том режиме, в котором работают сессии msb-lk: основное
+ * дерево стоит на базовой ветке, работу ведут в `.claude/worktrees/<имя>`, а агент целится абсолютными
+ * путями (и через `docker exec -w`). Метку пишет `switch-worktree-www.sh`, поле `session=` — id сессии;
+ * совпало с `PI_SESSION_ID` — значит основной чекаут для этой сессии не место правки.
+ *
+ * Корень ищется от цели вверх: первым предком с каталогом `.claude/worktrees` (подъём ограничен — от
+ * `/` вверх идти некуда). Фильтруются только метки с нашим id, поэтому чужие воркдеревья правило не
+ * трогают: `isUnder` по корню их и так не ловит, а по метке — и подавно.
+ */
+function sessionWorktreeViolation(absolutePath, cwd, env) {
+	const sessionId = (env.sessionId ?? process.env.PI_SESSION_ID ?? "").trim();
+	if (!sessionId || sessionId === "-") return null;
+
+	const exists = env.exists ?? existsSync;
+	const readdir = env.readdir ?? readdirSync;
+	const readFile = env.readFile ?? ((path) => readFileSync(path, "utf8"));
+
+	const repoRoot = repoRootOf(absolutePath, cwd, exists);
+	if (!repoRoot) return null;
+
+	const worktreesDir = join(repoRoot, ".claude", "worktrees");
+	let names = [];
+	try {
+		names = readdir(worktreesDir);
+	} catch {
+		return null;
+	}
+
+	for (const name of names) {
+		const marker = join(worktreesDir, String(name), ".session");
+		if (!exists(marker)) continue;
+
+		let claim = "";
+		try {
+			claim = String(readFile(marker) ?? "");
+		} catch {
+			continue;
+		}
+
+		const owner = /^session=(.*)$/m.exec(claim)?.[1]?.trim();
+		if (owner !== sessionId) continue;
+
+		const worktree = join(worktreesDir, String(name));
+		if (isUnder(absolutePath, worktree)) return null;
+		if (!isUnder(absolutePath, repoRoot)) return null;
+
+		return { repoRoot, worktree, name: String(name) };
+	}
+
+	return null;
+}
+
+/** Первый предок цели с каталогом `.claude/worktrees` — то есть корень репозитория в раскладке msb-lk. */
+function repoRootOf(absolutePath, cwd, exists) {
+	const starts = [absolutePath, resolve(cwd)];
+	for (const start of starts) {
+		let current = start;
+		for (let depth = 0; depth < 64; depth += 1) {
+			if (exists(join(current, ".claude", "worktrees"))) return current;
+			const parent = resolve(current, "..");
+			if (parent === current) break;
+			current = parent;
+		}
+	}
+
+	return null;
+}
+
+/**
  * Общий чекаут pi-setup (#16046 п.4): правка репозитория идёт в `~/p/pi-setup-wt/<задача>`, а общий
  * чекаут держит `main` для `install.sh` и `sync.sh`. Правило 5 такой путь не ловит, когда сессия
  * работает не в воркдереве pi-setup, а в основном дереве другого репозитория.
@@ -220,8 +298,8 @@ function isUnder(path, root) {
  * @param {string} cwd текущий рабочий каталог сессии
  * @param {{ roots?: string[], piSetupRoot?: string, allowTwin?: boolean, allowMainTree?: boolean,
  *           allowDenyList?: boolean, allowPiSetupMain?: boolean, exists?: Function,
- *           readdir?: Function }} [env] подмена корней и осознанные обходы (так правило проверяется
- *           тестом без записи файлов)
+ *           readdir?: Function, readFile?: Function, sessionId?: string }} [env] подмена корней,
+ *           id сессии и осознанные обходы (так правило проверяется тестом без записи файлов)
  * @returns {{ allowed: boolean, reason?: string, absolutePath?: string }}
  */
 export function checkPath(path, cwd, env = {}) {
@@ -290,6 +368,20 @@ export function checkPath(path, cwd, env = {}) {
 					"Правка уедет не в дерево задачи, а в основной чекаут, где её никто не закоммитит " +
 					"(хук root-files-clean ловит такое только на коммите). Возьмите путь дерева задачи. " +
 					`Осознанный обход — PI_PATH_GUARD_ALLOW_MAIN_TREE=1.${alsoRule7}`,
+			};
+		}
+	}
+
+	if (!env.allowMainTree) {
+		const claim = sessionWorktreeViolation(absolutePath, cwd, env);
+		if (claim) {
+			return {
+				allowed: false,
+				absolutePath,
+				reason:
+					`путь ${absolutePath} — в основном дереве ${claim.repoRoot}, а эта сессия держит воркдерево ${claim.worktree} (метка .session, ${claim.name}). ` +
+					"Правка уедет в основной чекаут, где её никто не закоммитит: ветка задачи живёт в воркдереве. " +
+					"Возьмите путь дерева задачи; осознанный обход — PI_PATH_GUARD_ALLOW_MAIN_TREE=1",
 			};
 		}
 	}

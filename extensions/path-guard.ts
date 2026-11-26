@@ -16,7 +16,8 @@
 //
 // Отключить на сессию: `pi --no-extensions` или убрать файл из `~/.pi/agent/extensions`.
 // Осознанные обходы отдельных правил: PI_PATH_GUARD_ALLOW_TWIN=1 (каталог-двойник по гомоглифу),
-// PI_PATH_GUARD_ALLOW_MAIN_TREE=1 (запись в основное дерево при активном воркдереве),
+// PI_PATH_GUARD_ALLOW_MAIN_TREE=1 (запись в основное дерево — и когда сессия работает в воркдереве,
+// и когда она сама держит метку `.claude/worktrees/<имя>/.session`, правило 8),
 // PI_PATH_GUARD_ALLOW_DENY_LIST=1 (список запрещённых слов ru-spellcheck — владение человека),
 // PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN=1 (запись в общий чекаут pi-setup — правка идёт в воркдереве).
 
@@ -29,6 +30,7 @@ function verdict(path: string, cwd: string) {
 		checkPath(path, cwd, {
 			allowTwin: process.env.PI_PATH_GUARD_ALLOW_TWIN === "1",
 			allowMainTree: process.env.PI_PATH_GUARD_ALLOW_MAIN_TREE === "1",
+			sessionId: process.env.PI_SESSION_ID ?? "",
 			allowDenyList: process.env.PI_PATH_GUARD_ALLOW_DENY_LIST === "1",
 			allowPiSetupMain: process.env.PI_PATH_GUARD_ALLOW_PI_SETUP_MAIN === "1",
 		}),
