@@ -26,12 +26,20 @@
 //    а два `grep -r … /home/денis` умерли по таймауту (60 с и 10 с). Файл до 50 КБ читается только
 //    `read` с `offset`/`limit`; файл больше 50 КБ и конвейер не трогаются.
 //
+//    С #16110 отказ у этого правила приходит вместе с содержимым: у `cat`, `sed -n 'A,Bp'` и `grep -n`
+//    по файлу до 50 КБ в тексте отказа стоят запрошенные строки с номерами. Причина — замер: 6–7
+//    отказов за сессию (#16074 — 3, #16048 — 7, #16110 — 6–7), и каждый стоил хода на повтор той же
+//    цели законным инструментом. Функция сторожа может только заблокировать вызов и подменить
+//    аргументы (`tool_call` в Pi не умеет вернуть результат другого инструмента), поэтому содержимое
+//    едет в тексте отказа. Отдаётся только первая область (как `read` с `limit`) и только один файл;
+//    для остального в отказе назван `offset`, с которого читать.
+//
 // Осознанный обход — PI_CALL_GUARD_ALLOW=1 (как у остальных сторожей pi-setup).
 //
 // Границы названы честно: разбор команд строковый и не знает экранирования вложенного шелла
 // (`bash -c '…'`). Ложное срабатывание лечится обходом, а не правкой правила на ходу.
 
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 /** Порог «файл больше 50 КБ»: такой файл через `sed -n`/`cat` читать разрешено (51200 байт). */
 const READ_LIMIT_BYTES = 51200;
@@ -123,10 +131,80 @@ function operands(args) {
 }
 
 /**
+ * Сколько строк файла сторож отдаёт вместо запрошенного чтения (#16110).
+ *
+ * Отказ без содержимого стоил хода на каждой сессии (#16074 — 3, #16048 — 7, #16110 — 6–7): агент
+ * повторял ту же цель законным инструментом. Возврат самого содержимого в тексте отказа делает отказ
+ * бесплатным, а граница держит разговор коротким — столько же вернул бы `read` с `limit`.
+ */
+const EXCERPT_MAX_LINES = 200;
+const EXCERPT_MAX_MATCHES = 50;
+
+/**
+ * Строки файла с номерами: `cat` — с начала, `sed -n 'A,Bp'` — запрошенный диапазон.
+ *
+ * @param {string} path
+ * @param {number} from с 1
+ * @param {number} to 0 с 1, включительно
+ * @returns {string} пустая строка — файл не прочитан
+ */
+function linesExcerpt(path, from, to) {
+	try {
+		const all = readFileSync(path, "utf8").split("\n");
+		const start = Math.max(1, from);
+		const end = Math.min(to, all.length, start + EXCERPT_MAX_LINES - 1);
+		if (end < start) return "";
+		const lines = [];
+		for (let n = start; n <= end; n += 1) {
+			lines.push(`${String(n).padStart(6, " ")}\t${all[n - 1] ?? ""}`);
+		}
+		if (end < all.length) lines.push(`… строки ${end + 1}–${all.length} не показаны: их отдаст read с offset=${end + 1}`);
+		return lines.join("\n");
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * Совпадения `grep -n <шаблон> <файл>` с номерами строк.
+ *
+ * Шаблон берётся как регулярное выражение (grep по умолчанию BRE, JS — ERE: для конструкций вроде `\(`
+ * они расходятся, для обычных слов и путей — нет). Не разобранный как регулярка шаблон
+ * ищется подстрокой — лучше грубый ответ, чем пустой.
+ *
+ * @param {string} path
+ * @param {string} pattern
+ * @returns {string}
+ */
+function grepExcerpt(path, pattern) {
+	let test;
+	try {
+		const re = new RegExp(pattern);
+		test = (line) => re.test(line);
+	} catch {
+		test = (line) => line.includes(pattern);
+	}
+	try {
+		const all = readFileSync(path, "utf8").split("\n");
+		const hits = [];
+		for (let i = 0; i < all.length; i += 1) {
+			if (test(all[i])) hits.push(`${String(i + 1).padStart(6, " ")}\t${all[i]}`);
+			if (hits.length > EXCERPT_MAX_MATCHES) break;
+		}
+		if (hits.length === 0) return `совпадений «${pattern}» в файле нет`;
+		const shown = hits.slice(0, EXCERPT_MAX_MATCHES);
+		if (hits.length > EXCERPT_MAX_MATCHES) shown.push(`… совпадений больше ${EXCERPT_MAX_MATCHES}: сузьте шаблон или берите ffgrep с limit`);
+		return shown.join("\n");
+	} catch {
+		return "";
+	}
+}
+
+/**
  * Правило чтения: `sed -n`, `cat <файл>`, `grep -n <файл>` по файлу до 50 КБ и `grep -r` по дому.
  *
  * @param {string} segment
- * @returns {{ allowed: boolean, reason: string, hint: string } | null}
+ * @returns {{ allowed: boolean, reason: string, hint: string, excerpt?: string } | null}
  */
 function readingVerdict(segment) {
 	const parts = words(segment);
@@ -144,10 +222,12 @@ function readingVerdict(segment) {
 		if (script === undefined) return null;
 		const file = operands(args.slice(args.indexOf(script) + 1))[0];
 		if (file === undefined || file === "-" || !readsSmallFile(file)) return null;
+		const [from, to] = script.slice(0, -1).split(",").map((value) => Number.parseInt(value, 10));
 		return {
 			allowed: false,
 			reason: "`sed -n 'N,Mp' <файл>` — чтение файла через bash; преимуществ перед `read` у него нет.",
 			hint: hintRead,
+			excerpt: linesExcerpt(file, from, Number.isFinite(to) ? to : from),
 		};
 	}
 
@@ -158,10 +238,13 @@ function readingVerdict(segment) {
 		const files = operands(args);
 		if (files.length === 0 || files.includes("-")) return null;
 		if (!files.some((file) => readsSmallFile(file))) return null;
+		// Несколько файлов сторож не отдаёт: `cat a b` — это склейка, и порядок в ней важен для
+		// читающего; без содержимого остаётся обычный отказ.
 		return {
 			allowed: false,
 			reason: "`cat <файл>` — то же чтение, что и `read`, но без номеров строк и без номера области.",
 			hint: hintRead,
+			excerpt: files.length === 1 ? linesExcerpt(files[0], 1, EXCERPT_MAX_LINES) : "",
 		};
 	}
 
@@ -188,10 +271,13 @@ function readingVerdict(segment) {
 		return probe !== null && !probe.isFile ? false : readsSmallFile(file);
 	});
 	if (!suspicious) return null;
+	// Шаблон — первый операнд, файлы — остальные; для нескольких файлов содержимое не отдаётся, как и
+	// у `cat`: смешать их вывод значило бы соврать о том, откуда строка.
 	return {
 		allowed: false,
-			reason: "`grep -n <файл>` — поиск по файлу через bash; `ffgrep` учитывает `.gitignore` и держит вывод в `limit`.",
+		reason: "`grep -n <файл>` — поиск по файлу через bash; `ffgrep` учитывает `.gitignore` и держит вывод в `limit`.",
 		hint: hintRead,
+		excerpt: files.length === 1 ? grepExcerpt(files[0], positional[0] ?? "") : "",
 	};
 }
 
@@ -389,6 +475,16 @@ export function classifyCall(command, options = {}) {
 export function toToolCallResult(verdict) {
 	if (verdict.allowed) return undefined;
 
-	const lines = [`Call Guard blocked: ${verdict.reason ?? "вызов без цели"}`, ...(verdict.hint ? [verdict.hint] : [])];
+	const lines = [`Call Guard blocked: ${verdict.reason ?? "вызов без цели"}`];
+	if (verdict.excerpt) {
+		// Содержимое отдаётся до подсказки о законном инструменте: агенту нужен ответ, а не нотация.
+		// Повторный вызов не нужен — это и есть цель правки #16110.
+		lines.push(
+			"Запрошенное содержимое — здесь, повторный вызов не нужен:",
+			verdict.excerpt,
+			"Дальше этот файл читайте `read` (offset/limit, нумерация и дифф) или `ffgrep`: сторож отдаёт только первую область, остальное — нет."
+		);
+	}
+	if (verdict.hint) lines.push(verdict.hint);
 	return { block: true, reason: lines.join("\n") };
 }

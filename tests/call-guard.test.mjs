@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { classifyCall, splitSegments } from "../extensions/call-guard-core.mjs";
+import { classifyCall, splitSegments, toToolCallResult } from "../extensions/call-guard-core.mjs";
 
 test("пустой вызов после cd блокируется — замер #15738 п.5", () => {
 	const verdict = classifyCall("cd /home/denis/p/msl/msb-lk 2>/dev/null; true");
@@ -242,4 +242,63 @@ test("grep -r по домашнему каталогу и корню репоз�
 
 test("sed -i снимается осознанным обходом", () => {
 	assert.equal(classifyCall("sed -i 's/a/b/' src/Foo.php", { allow: true }).allowed, true);
+});
+
+// #16110: отказ приходит вместе с запрошенным содержимым. Замер: 6–7 отказов за сессию (#16074 — 3,
+// #16048 — 7), и каждый стоил хода на повтор той же цели законным инструментом. Здесь проверяется, что
+// повторять нечего: строки с номерами уже в отказе, а границы — те же, что у `read` с `limit`.
+const excerptFile = join(fixtures, "excerpt.md");
+writeFileSync(
+	excerptFile,
+	Array.from({ length: 300 }, (_, index) => `line ${index + 1} needle`).join("\n"),
+);
+const excerptOf = (command) => toToolCallResult(classifyCall(command))?.reason ?? "";
+
+test("sed -n отдаёт запрошенный диапазон с номерами строк", () => {
+	const reason = excerptOf(`sed -n '5,7p' ${excerptFile}`);
+	assert.match(reason, /повторный вызов не нужен/);
+	assert.match(reason, /^\s+5\tline 5 needle$/m);
+	assert.match(reason, /^\s+7\tline 7 needle$/m);
+	assert.doesNotMatch(reason, /^\s+8\t/m, "строки за диапазоном попадать не должны");
+	assert.match(reason, /read с offset=8/, "граница названа: остальное отдаёт read");
+});
+
+test("sed -n с одной строкой (`5p`) отдаёт ровно её", () => {
+	const reason = excerptOf(`sed -n '5p' ${excerptFile}`);
+	assert.match(reason, /^\s+5\tline 5 needle$/m);
+	assert.doesNotMatch(reason, /^\s+6\t/m);
+});
+
+test("cat отдаёт начало файла и говорит, где остановился", () => {
+	const reason = excerptOf(`cat ${excerptFile}`);
+	assert.match(reason, /^\s+1\tline 1 needle$/m);
+	assert.match(reason, /^\s+200\tline 200 needle$/m);
+	assert.match(reason, /не показаны/);
+	assert.match(reason, /offset=201/);
+});
+
+test("grep -n отдаёт совпадения с номерами, а пустой результат называет явно", () => {
+	const found = excerptOf(`grep -n needle ${excerptFile}`);
+	assert.match(found, /^\s+1\tline 1 needle$/m);
+	assert.match(found, /совпадений больше 50/, "вывод держится в границах, как у ffgrep с limit");
+	const empty = excerptOf(`grep -n отсутствует_в_файле ${excerptFile}`);
+	assert.match(empty, /совпадений «отсутствует_в_файле» в файле нет/);
+});
+
+test("файл больше 50 КБ и нечитаемый путь содержимого не отдают", () => {
+	assert.equal(classifyCall(`cat ${bigFile}`).allowed, true, "большой файл разрешён целиком");
+	const missing = excerptOf(`cat ${join(fixtures, "нет-такого-файла.md")}`);
+	assert.doesNotMatch(missing, /повторный вызов не нужен/, "обещать содержимое, которого нет, нельзя");
+});
+
+test("блокировки не про чтение содержимого не отдают", () => {
+	for (const command of ["git branch -a", `sed -i 's/a/b/' ${excerptFile}`, "cd /repo; true"]) {
+		const reason = excerptOf(command);
+		assert.doesNotMatch(reason, /повторный вызов не нужен/, command);
+	}
+});
+
+test("несколько файлов в cat и grep содержимое не отдают", () => {
+	assert.doesNotMatch(excerptOf(`cat ${smallFile} ${excerptFile}`), /повторный вызов не нужен/);
+	assert.doesNotMatch(excerptOf(`grep -n needle ${smallFile} ${excerptFile}`), /повторный вызов не нужен/);
 });
